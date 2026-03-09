@@ -426,6 +426,208 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   );
 }
 
+// ── ARBI (cross-exchange live rates) ──────────────────────────────────────────
+// Crypto assets available on all three exchanges
+const ARBI_ASSETS = [
+  "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF",
+  "HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP",
+];
+
+// Binance symbol overrides (PEPE uses 1000PEPE, etc.)
+const BN_SYMBOL = { "PEPE": "1000PEPE", "SHIB": "1000SHIB", "FLOKI": "1000FLOKI" };
+function bnSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
+function bySym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
+
+async function fetchBinanceLive(coin) {
+  try {
+    const res = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${bnSym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    return parseFloat(d.lastFundingRate); // per 8h
+  } catch { return null; }
+}
+
+async function fetchBybitLive(coin) {
+  try {
+    const res = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${bySym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const rate = d.result?.list?.[0]?.fundingRate;
+    return rate != null ? parseFloat(rate) : null; // per 8h
+  } catch { return null; }
+}
+
+function spreadColor(v) {
+  if (v === null) return "#333";
+  if (v > 20) return "#00d4aa";
+  if (v > 5) return "#7fdfcc";
+  if (v > -5) return "#888";
+  if (v > -20) return "#ff8fa0";
+  return "#ff4d6d";
+}
+
+function ArbitragePage({ onNavigate }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [sortCol, setSortCol] = useState("hlApr");
+  const [sortDir, setSortDir] = useState(-1);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Fetch all HL live rates in one call
+      const hlRes = await fetch("https://api.hyperliquid.xyz/info", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+      });
+      const hlData = await hlRes.json();
+      const hlUniverse = hlData[0].universe;
+      const hlCtxs = hlData[1];
+
+      const results = await Promise.all(ARBI_ASSETS.map(async (coin) => {
+        const hlIdx = hlUniverse.findIndex(a => a.name === coin);
+        const hlRate = hlIdx !== -1 ? parseFloat(hlCtxs[hlIdx].funding) : null; // per 1h
+        const hlApr = hlRate !== null ? hlRate * 100 * 24 * 365 : null;
+
+        const [bnRate, byRate] = await Promise.all([
+          fetchBinanceLive(coin),
+          fetchBybitLive(coin),
+        ]);
+        const bnApr = bnRate !== null ? bnRate * 100 * 3 * 365 : null;  // 8h → 3/day
+        const byApr = byRate !== null ? byRate * 100 * 3 * 365 : null;
+
+        const hlVsBn = hlApr !== null && bnApr !== null ? hlApr - bnApr : null;
+        const hlVsBy = hlApr !== null && byApr !== null ? hlApr - byApr : null;
+
+        return { coin, hlRate, hlApr, bnRate, bnApr, byRate, byApr, hlVsBn, hlVsBy };
+      }));
+
+      setRows(results);
+      setLastUpdate(Date.now());
+    } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => -d);
+    else { setSortCol(col); setSortDir(-1); }
+  };
+
+  const sorted = [...rows].sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
+
+  const aprColor = (v) => {
+    if (v === null) return "#333";
+    if (v > 50) return "#00d4aa";
+    if (v > 10) return "#7fdfcc";
+    if (v > 0) return "#aaa";
+    if (v > -10) return "#ff8fa0";
+    return "#ff4d6d";
+  };
+
+  const cols = [
+    ["hlApr", "HL APR"],
+    ["bnApr", "Binance APR"],
+    ["byApr", "Bybit APR"],
+    ["hlVsBn", "HL − BN"],
+    ["hlVsBy", "HL − BY"],
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
+      <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 600, color: "#fff", margin: "0 0 3px 0" }}>
+            Arbitrage<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
+          </h2>
+          <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.08em" }}>
+            Funding live · HL 1h×24×365 · Binance/Bybit 8h×3×365 · clic colonne pour trier
+          </div>
+        </div>
+        <button onClick={load} disabled={loading} style={{
+          background: loading ? "transparent" : "#4a9eff22",
+          border: `1px solid ${loading ? "#1e3a5f" : "#4a9eff"}`,
+          borderRadius: 4, color: loading ? "#333" : "#4a9eff",
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+          padding: "6px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
+        }}>{loading ? "⟳ Chargement..." : "⟳ RAFRAÎCHIR"}</button>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 9, color: "#555", letterSpacing: "0.06em", flexWrap: "wrap" }}>
+        <span><span style={{ color: "#00d4aa" }}>■</span> &gt;+50% APR</span>
+        <span><span style={{ color: "#7fdfcc" }}>■</span> +10–50%</span>
+        <span><span style={{ color: "#aaa" }}>■</span> 0–10%</span>
+        <span><span style={{ color: "#ff8fa0" }}>■</span> -10–0%</span>
+        <span><span style={{ color: "#ff4d6d" }}>■</span> &lt;-10%</span>
+        <span style={{ marginLeft: "auto" }}>
+          {lastUpdate && `Màj: ${new Date(lastUpdate).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`}
+        </span>
+      </div>
+
+      {sorted.length > 0 ? (
+        <div style={{ background: "#0a0a18", border: "1px solid #1e3a5f", borderRadius: 10, overflow: "hidden", flex: "1 1 auto" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 560 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
+                  <th style={{ padding: "10px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
+                  {cols.map(([col, label]) => (
+                    <th key={col} onClick={() => handleSort(col)} style={{
+                      padding: "10px 12px", textAlign: "right",
+                      color: sortCol === col ? "#4a9eff" : col.startsWith("hlVs") ? "#6a6a8f" : "#555",
+                      fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+                      fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
+                      borderLeft: col === "hlVsBn" ? "1px solid #0d1525" : "none",
+                    }}>
+                      {label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}
+                    </th>
+                  ))}
+                  <th style={{ padding: "10px 12px", width: 40 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((row, i) => (
+                  <tr key={row.coin} style={{ borderBottom: "1px solid #0d1525", background: i % 2 === 0 ? "transparent" : "#07070f" }}>
+                    <td style={{ padding: "7px 12px", color: "#e0e0e0", fontWeight: 500 }}>{row.coin}</td>
+                    <td style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row.hlApr), fontWeight: sortCol === "hlApr" ? 600 : 400 }}>
+                      {row.hlApr !== null ? fmtAPR(row.hlApr) : "—"}
+                    </td>
+                    <td style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row.bnApr), fontWeight: sortCol === "bnApr" ? 600 : 400 }}>
+                      {row.bnApr !== null ? fmtAPR(row.bnApr) : "—"}
+                    </td>
+                    <td style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row.byApr), fontWeight: sortCol === "byApr" ? 600 : 400 }}>
+                      {row.byApr !== null ? fmtAPR(row.byApr) : "—"}
+                    </td>
+                    <td style={{ padding: "7px 12px", textAlign: "right", color: spreadColor(row.hlVsBn), fontWeight: sortCol === "hlVsBn" ? 600 : 400, borderLeft: "1px solid #0d1525" }}>
+                      {row.hlVsBn !== null ? fmtAPR(row.hlVsBn) : "—"}
+                    </td>
+                    <td style={{ padding: "7px 12px", textAlign: "right", color: spreadColor(row.hlVsBy), fontWeight: sortCol === "hlVsBy" ? 600 : 400 }}>
+                      {row.hlVsBy !== null ? fmtAPR(row.hlVsBy) : "—"}
+                    </td>
+                    <td style={{ padding: "7px 12px", textAlign: "center" }}>
+                      <button onClick={() => onNavigate(row.coin)} title="Explorer" style={{ background: "transparent", border: "1px solid #1e3a5f", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ padding: "7px 12px", borderTop: "1px solid #1e3a5f", fontSize: 9, color: "#2a2a3a" }}>
+            {sorted.length} assets · HL vs Binance Futures vs Bybit Linear · — = non disponible
+          </div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#2a2a3a", fontSize: 11, letterSpacing: "0.1em" }}>
+          {loading ? "⟳ Chargement des données cross-exchange..." : "Aucune donnée"}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── COMPARE ───────────────────────────────────────────────────────────────────
 function ComparePage({ onNavigate }) {
   const [results, setResults] = useState([]);
@@ -611,7 +813,6 @@ export default function App() {
 
   const navigateToExplorer = (coin) => { setExplorerCoin(coin); setPage("explorer"); };
 
-
   return (
     <div style={{
       minHeight: "100vh", background: "#05050d", color: "#e0e0e0",
@@ -640,7 +841,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: "#333", letterSpacing: "0.08em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>FUNDING RATE EXPLORER</span>
           </div>
           <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            {[["explorer","Explorer"],["compare","Comparer"]].map(([id, label]) => (
+            {[["explorer","Explorer"],["compare","Comparer"],["arbi","Arbi"]].map(([id, label]) => (
               <button key={id} onClick={() => setPage(id)} style={{
                 boxSizing: "border-box",
                 background: page === id ? "#4a9eff" : "transparent",
@@ -657,12 +858,14 @@ export default function App() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
           {page === "explorer"
             ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} />
-            : <ComparePage onNavigate={navigateToExplorer} />
+            : page === "compare"
+            ? <ComparePage onNavigate={navigateToExplorer} />
+            : <ArbitragePage onNavigate={navigateToExplorer} />
           }
         </div>
 
         <div style={{ fontSize: 9, color: "#1a1a2a", textAlign: "right", letterSpacing: "0.08em", marginTop: 12 }}>
-          HYPERLIQUID API · FUNDING HORAIRE · APR = RATE × 24 × 365
+          HYPERLIQUID · BINANCE · BYBIT · APR = RATE × FREQ × 365
         </div>
       </div>
     </div>
