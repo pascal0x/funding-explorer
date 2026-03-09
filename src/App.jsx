@@ -133,18 +133,24 @@ async function fetchBybitFundingHistory(coin, days) {
     const startTime = Date.now() - days * 24 * 3600 * 1000;
     const all = [];
     let cursor = "";
-    for (let p = 0; p < 4; p++) {
-      const params = new URLSearchParams({
-        category: "linear", symbol: bySym(coin), limit: "200", startTime: String(startTime),
-      });
+    for (let p = 0; p < 10; p++) {
+      // Note: no startTime in URL — Bybit ignores it inconsistently; filter client-side instead
+      const params = new URLSearchParams({ category: "linear", symbol: bySym(coin), limit: "200" });
       if (cursor) params.set("cursor", cursor);
       const res = await fetch(`https://api.bybit.com/v5/market/funding/history?${params}`);
       if (!res.ok) break;
       const d = await res.json();
+      if (d.retCode !== 0) break;
       const list = d.result?.list ?? [];
-      all.push(...list.map(x => ({ time: +x.fundingRateTimestamp, fundingRate: x.fundingRate, premium: "0" })));
+      if (!list.length) break;
+      let stop = false;
+      for (const x of list) {
+        const ts = +x.fundingRateTimestamp;
+        if (ts < startTime) { stop = true; break; }
+        all.push({ time: ts, fundingRate: x.fundingRate, premium: "0" });
+      }
       cursor = d.result?.nextPageCursor ?? "";
-      if (!cursor || list.length < 200) break;
+      if (stop || !cursor) break;
     }
     return all.sort((a, b) => a.time - b.time);
   } catch { return []; }
