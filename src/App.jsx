@@ -20,6 +20,15 @@ const XYZ = new Set([
   "SNDK","SOFTBANK","KIOXIA","USAR","URNM",
 ]);
 
+// ── Venues ────────────────────────────────────────────────────────────────────
+const VENUES = [
+  { id: "hl", label: "Hyperliquid", color: "#4a9eff" },
+  { id: "bn", label: "Binance",     color: "#f0b90b" },
+  { id: "by", label: "Bybit",       color: "#e6a817" },
+];
+// APR freq: HL 1h × 24 × 365, BN/BY 8h × 3 × 365
+const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365 };
+
 // Show first N coins as buttons, rest in dropdown
 const VISIBLE_COUNT = 6;
 const ALL_ASSETS = [...new Set([
@@ -29,7 +38,7 @@ const ALL_ASSETS = [...new Set([
 
 function apiCoin(c) { return XYZ.has(c) ? `xyz:${c}` : c; }
 function isXyz(c) { return XYZ.has(c); }
-function toAPR(r) { return parseFloat(r) * 100 * 24 * 365; }
+function toAPR(r, freq = 24 * 365) { return parseFloat(r) * 100 * freq; }
 function fmtRate(r) { return (parseFloat(r) * 100).toFixed(4) + "%"; }
 function fmtAPR(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; }
 function fmtDateShort(ts) {
@@ -45,7 +54,12 @@ function getCat(coin) {
   return "Other";
 }
 
-// ── API ───────────────────────────────────────────────────────────────────────
+// Binance symbol overrides
+const BN_SYMBOL = { "PEPE": "1000PEPE", "kPEPE": "1000PEPE", "SHIB": "1000SHIB", "FLOKI": "1000FLOKI" };
+function bnSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
+function bySym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
+
+// ── API — Hyperliquid ─────────────────────────────────────────────────────────
 async function fetchAllFunding(coin, days) {
   const startTime = Date.now() - days * 24 * 3600 * 1000;
   const allData = [];
@@ -80,6 +94,62 @@ async function fetchLiveFunding(coin) {
   const target = isXyz(coin) ? `xyz:${coin}` : coin;
   const idx = universe.findIndex(a => a.name === target);
   return idx !== -1 ? ctxs[idx] : null;
+}
+
+// ── API — Binance ─────────────────────────────────────────────────────────────
+async function fetchBinanceFundingHistory(coin, days) {
+  try {
+    const startTime = Date.now() - days * 24 * 3600 * 1000;
+    const res = await fetch(
+      `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${bnSym(coin)}&startTime=${startTime}&limit=1000`
+    );
+    if (!res.ok) return [];
+    const d = await res.json();
+    if (!Array.isArray(d)) return [];
+    return d.map(x => ({ time: x.fundingTime, fundingRate: x.fundingRate, premium: "0" }));
+  } catch { return []; }
+}
+
+async function fetchBinanceLiveFunding(coin) {
+  try {
+    const res = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${bnSym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    return { funding: d.lastFundingRate, nextFundingTime: d.nextFundingTime };
+  } catch { return null; }
+}
+
+// ── API — Bybit ───────────────────────────────────────────────────────────────
+async function fetchBybitFundingHistory(coin, days) {
+  try {
+    const startTime = Date.now() - days * 24 * 3600 * 1000;
+    const all = [];
+    let cursor = "";
+    for (let p = 0; p < 4; p++) {
+      const params = new URLSearchParams({
+        category: "linear", symbol: bySym(coin), limit: "200", startTime: String(startTime),
+      });
+      if (cursor) params.set("cursor", cursor);
+      const res = await fetch(`https://api.bybit.com/v5/market/funding/history?${params}`);
+      if (!res.ok) break;
+      const d = await res.json();
+      const list = d.result?.list ?? [];
+      all.push(...list.map(x => ({ time: +x.fundingRateTimestamp, fundingRate: x.fundingRate, premium: "0" })));
+      cursor = d.result?.nextPageCursor ?? "";
+      if (!cursor || list.length < 200) break;
+    }
+    return all.sort((a, b) => a.time - b.time);
+  } catch { return []; }
+}
+
+async function fetchBybitLiveFunding(coin) {
+  try {
+    const res = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${bySym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const item = d.result?.list?.[0];
+    return item ? { funding: item.fundingRate, nextFundingTime: item.nextFundingTime } : null;
+  } catch { return null; }
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
@@ -141,7 +211,6 @@ function CoinSelector({ coins, selected, onSelect }) {
 
       {rest.length > 0 && (
         <div ref={ref} style={{ position: "relative" }}>
-          {/* Trigger button */}
           <button
             onClick={() => setOpen(v => !v)}
             style={{
@@ -175,7 +244,6 @@ function CoinSelector({ coins, selected, onSelect }) {
             }} />
           </button>
 
-          {/* Panel */}
           {open && (
             <div style={{
               position: "absolute",
@@ -233,6 +301,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   const [category, setCategory] = useState(initCat);
   const [coin, setCoin] = useState(initialCoin);
   const [inputCoin, setInputCoin] = useState(initialCoin);
+  const [venue, setVenue] = useState("hl");
   const [period, setPeriod] = useState(7);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -245,19 +314,37 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   const TABLE_SIZE = 50;
   const liveRef = useRef(null);
 
-  const loadLive = useCallback(async (c) => {
-    try { setLive(await fetchLiveFunding(c)); } catch { setLive(null); }
+  const loadLive = useCallback(async (c, v) => {
+    try {
+      if (v === "hl") setLive(await fetchLiveFunding(c));
+      else if (v === "bn") setLive(await fetchBinanceLiveFunding(c));
+      else if (v === "by") setLive(await fetchBybitLiveFunding(c));
+      else setLive(null);
+    } catch { setLive(null); }
   }, []);
 
-  const fetchData = useCallback(async (c, days) => {
+  const fetchData = useCallback(async (c, days, v) => {
+    // BN/BY don't support XYZ (stocks/FX/commodities) assets
+    if ((v === "bn" || v === "by") && isXyz(c)) {
+      setData([]); setStats(null); setLive(null);
+      setError(`${c} n'est pas disponible sur ${VENUES.find(x => x.id === v)?.label}`);
+      return;
+    }
     setLoading(true); setLoadingMsg(days > 7 ? `Pagination (${days}j)...` : "Chargement...");
     setError(null); setData([]); setStats(null); setLive(null);
     try {
-      const raw = await fetchAllFunding(c, days);
-      if (!raw.length) throw new Error(`Aucune donnée pour ${c}`);
+      let raw = [];
+      if (v === "hl") raw = await fetchAllFunding(c, days);
+      else if (v === "bn") raw = await fetchBinanceFundingHistory(c, days);
+      else if (v === "by") raw = await fetchBybitFundingHistory(c, days);
+
+      if (!raw.length) throw new Error(`Aucune donnée pour ${c} sur ${VENUES.find(x => x.id === v)?.label}`);
+
+      const freq = VENUE_FREQ[v];
       const parsed = raw.map(d => ({
         time: d.time, rate: parseFloat(d.fundingRate) * 100,
-        rawRate: d.fundingRate, rawPremium: d.premium, apr: toAPR(d.fundingRate),
+        rawRate: d.fundingRate, rawPremium: d.premium ?? "0",
+        apr: toAPR(d.fundingRate, freq),
         ratePos: parseFloat(d.fundingRate) >= 0 ? parseFloat(d.fundingRate) * 100 : 0,
         rateNeg: parseFloat(d.fundingRate) < 0 ? parseFloat(d.fundingRate) * 100 : 0,
       }));
@@ -265,18 +352,23 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       const rates = parsed.map(d => d.rate);
       const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
       const positive = rates.filter(r => r >= 0).length;
-      setStats({ avg, avgApr: avg * 24 * 365, max: Math.max(...rates), maxApr: Math.max(...rates) * 24 * 365, min: Math.min(...rates), minApr: Math.min(...rates) * 24 * 365, positive: ((positive / rates.length) * 100).toFixed(0), count: rates.length });
-      loadLive(c);
+      setStats({
+        avg, avgApr: avg * freq,
+        max: Math.max(...rates), maxApr: Math.max(...rates) * freq,
+        min: Math.min(...rates), minApr: Math.min(...rates) * freq,
+        positive: ((positive / rates.length) * 100).toFixed(0), count: rates.length,
+      });
+      loadLive(c, v);
     } catch (e) { setError(e.message); }
     setLoading(false); setLoadingMsg("");
   }, [loadLive]);
 
   useEffect(() => {
-    fetchData(coin, period);
+    fetchData(coin, period, venue);
     if (liveRef.current) clearInterval(liveRef.current);
-    liveRef.current = setInterval(() => loadLive(coin), 60000);
+    liveRef.current = setInterval(() => loadLive(coin, venue), 60000);
     return () => clearInterval(liveRef.current);
-  }, [coin, period, fetchData, loadLive]);
+  }, [coin, period, venue, fetchData, loadLive]);
 
   const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); setTablePage(0); };
   const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) { setCoin(c); setTablePage(0); } };
@@ -285,15 +377,17 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   const totalPages = Math.ceil(tableData.length / TABLE_SIZE);
   const pageData = tableData.slice(tablePage * TABLE_SIZE, (tablePage + 1) * TABLE_SIZE);
 
+  const venueInfo = VENUES.find(v2 => v2.id === venue);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      {/* Title + period */}
+      {/* Title + venue + period */}
       <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 600, color: "#fff", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
-            {coin}<span style={{ color: "#4a9eff" }}>-PERP</span>
+            {coin}<span style={{ color: venueInfo?.color ?? "#4a9eff" }}>-PERP</span>
           </span>
-          {isXyz(coin) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3</span>}
+          {isXyz(coin) && venue === "hl" && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3</span>}
         </div>
         <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
           {[{l:"7j",d:7},{l:"30j",d:30},{l:"90j",d:90}].map(p => (
@@ -307,6 +401,23 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
             }}>{p.l}</button>
           ))}
         </div>
+      </div>
+
+      {/* Venue selector */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Venue</span>
+        {VENUES.map(v2 => (
+          <button key={v2.id} onClick={() => setVenue(v2.id)} style={{
+            boxSizing: "border-box",
+            background: venue === v2.id ? `${v2.color}22` : "transparent",
+            border: `1px solid ${venue === v2.id ? v2.color : "#1e3a5f"}`,
+            borderRadius: 4,
+            color: venue === v2.id ? v2.color : "#444",
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
+            padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+          }}>{v2.label}</button>
+        ))}
       </div>
 
       {/* Category tabs */}
@@ -339,10 +450,10 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
           <StatCard
             label="Funding actuel" live={!!live}
             value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#00d4aa" : "#ff4d6d" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
-            sub={live ? `APR: ${fmtAPR(toAPR(live.funding))}` : "En attente..."}
+            sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "En attente..."}
             color="#fff"
           />
-          <StatCard label="Funding moyen / h" value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
+          <StatCard label="Funding moyen / interval" value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
           <StatCard label="Max" value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#00d4aa" />
           <StatCard label="Min" value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ff4d6d" />
           <StatCard label="% positif" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}j`} color="#4a9eff" />
@@ -368,12 +479,12 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#0d1d35" vertical={false} />
               <XAxis dataKey="time" tickFormatter={fmtDateShort} tick={{ fill: "#333", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={{ stroke: "#1e3a5f" }} interval="preserveStartEnd" />
-              <YAxis tickFormatter={v => v.toFixed(4) + "%"} tick={{ fill: "#333", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
+              <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#333", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
               <Tooltip content={<CustomTooltip />} />
               <ReferenceLine y={0} stroke="#2a4a6f" strokeDasharray="3 3" />
               <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
               <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
-              <Line type="monotone" dataKey="rate" stroke="#4a9eff" strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: "#4a9eff", stroke: "#05050d", strokeWidth: 2 }} />
+              <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "#05050d", strokeWidth: 2 }} />
             </ComposedChart>
           </ResponsiveContainer>
         )}
@@ -382,7 +493,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       {/* Table */}
       {data.length > 0 && (
         <div style={{ marginBottom: 8 }}>
-          <button onClick={() => { setShowTable(v => !v); setTablePage(0); }} style={{ background: showTable ? "#4a9eff22" : "transparent", border: "1px solid #1e3a5f", borderRadius: 4, color: showTable ? "#4a9eff" : "#444", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          <button onClick={() => { setShowTable(v2 => !v2); setTablePage(0); }} style={{ background: showTable ? "#4a9eff22" : "transparent", border: "1px solid #1e3a5f", borderRadius: 4, color: showTable ? "#4a9eff" : "#444", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase" }}>
             {showTable ? "▲ Masquer" : "▼ Données brutes"}
           </button>
         </div>
@@ -431,45 +542,6 @@ const ARBI_ASSETS = [
   "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF",
   "HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP",
 ];
-
-// Binance symbol overrides (some coins use multiplier prefix)
-const BN_SYMBOL = { "PEPE": "1000PEPE", "SHIB": "1000SHIB", "FLOKI": "1000FLOKI" };
-function bnSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
-function bySym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
-
-// Fetch Binance historical funding (one call, limit covers 90d @ 8h intervals = ~270 pts)
-async function fetchBinanceHistory(coin) {
-  try {
-    const startTime = Date.now() - 91 * 24 * 3600 * 1000;
-    const res = await fetch(
-      `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${bnSym(coin)}&startTime=${startTime}&limit=1000`
-    );
-    if (!res.ok) return [];
-    const d = await res.json();
-    return Array.isArray(d) ? d : [];
-  } catch { return []; }
-}
-
-// Fetch Bybit historical funding (paginated, newest-first, up to 90d)
-async function fetchBybitHistory(coin) {
-  try {
-    const startTime = Date.now() - 91 * 24 * 3600 * 1000;
-    const all = [];
-    let cursor = "";
-    for (let p = 0; p < 4; p++) {
-      const params = new URLSearchParams({ category: "linear", symbol: bySym(coin), limit: "200", startTime: String(startTime) });
-      if (cursor) params.set("cursor", cursor);
-      const res = await fetch(`https://api.bybit.com/v5/market/funding/history?${params}`);
-      if (!res.ok) break;
-      const d = await res.json();
-      const list = d.result?.list ?? [];
-      all.push(...list);
-      cursor = d.result?.nextPageCursor ?? "";
-      if (!cursor || list.length < 200) break;
-    }
-    return all;
-  } catch { return []; }
-}
 
 // APR helpers — HL 1h intervals, BN/BY 8h intervals
 function hlAvgAPR(data) {
@@ -521,17 +593,16 @@ function ArbitragePage({ onNavigate }) {
         try {
           const [hlRaw, bnRaw, byRaw] = await Promise.all([
             fetchAllFunding(coin, 90).catch(() => []),
-            fetchBinanceHistory(coin).catch(() => []),
-            fetchBybitHistory(coin).catch(() => []),
+            fetchBinanceFundingHistory(coin, 91).catch(() => []),
+            fetchBybitFundingHistory(coin, 91).catch(() => []),
           ]);
 
           const hl7  = hlRaw.filter(d => d.time  >= now - D7);
           const hl30 = hlRaw.filter(d => d.time  >= now - D30);
-          const bn7  = bnRaw.filter(d => d.fundingTime >= now - D7);
-          const bn30 = bnRaw.filter(d => d.fundingTime >= now - D30);
-          // Bybit timestamps are strings in ms
-          const by7  = byRaw.filter(d => +d.fundingRateTimestamp >= now - D7);
-          const by30 = byRaw.filter(d => +d.fundingRateTimestamp >= now - D30);
+          const bn7  = bnRaw.filter(d => d.time  >= now - D7);
+          const bn30 = bnRaw.filter(d => d.time  >= now - D30);
+          const by7  = byRaw.filter(d => d.time  >= now - D7);
+          const by30 = byRaw.filter(d => d.time  >= now - D30);
 
           return {
             coin,
@@ -562,7 +633,6 @@ function ArbitragePage({ onNavigate }) {
 
   const sorted = [...rows].sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
 
-  // Column groups: exchange → [key, label]
   const groups = [
     { label: "Hyperliquid", color: "#4a9eff", cols: [["hl7","7j"],["hl30","30j"],["hl90","90j"]] },
     { label: "Binance",     color: "#f0b90b", cols: [["bn7","7j"],["bn30","30j"],["bn90","90j"]] },
@@ -580,7 +650,6 @@ function ArbitragePage({ onNavigate }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      {/* Header */}
       <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 600, color: "#fff", margin: "0 0 3px 0" }}>
@@ -603,7 +672,6 @@ function ArbitragePage({ onNavigate }) {
         </div>
       </div>
 
-      {/* Progress */}
       {loading && (
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9, color: "#4a9eff", marginBottom: 4, letterSpacing: "0.08em" }}>
@@ -620,7 +688,6 @@ function ArbitragePage({ onNavigate }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 740 }}>
               <thead>
-                {/* Group row */}
                 <tr style={{ borderBottom: "1px solid #0d1525" }}>
                   <th style={{ padding: "7px 12px" }} />
                   {groups.map((g, gi) => (
@@ -632,7 +699,6 @@ function ArbitragePage({ onNavigate }) {
                   ))}
                   <th style={{ padding: "7px 12px", width: 40 }} />
                 </tr>
-                {/* Sub-column row */}
                 <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
                   <th style={{ padding: "8px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
                   {groups.map((g, gi) =>
@@ -685,73 +751,124 @@ function ArbitragePage({ onNavigate }) {
 
 // ── COMPARE ───────────────────────────────────────────────────────────────────
 function ComparePage({ onNavigate }) {
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [sortCol, setSortCol] = useState("apr30");
+  // Per-venue data storage: { hl: [{coin, cat, apr7, apr30, apr90}], bn: [...], by: [...] }
+  const [venueData, setVenueData] = useState({ hl: null, bn: null, by: null });
+  const [loadingVenues, setLoadingVenues] = useState(new Set());
+  const [progressMap, setProgressMap] = useState({});
+  const [selectedVenues, setSelectedVenues] = useState(new Set(["hl"]));
+  const [sortCol, setSortCol] = useState("hl_apr30");
   const [sortDir, setSortDir] = useState(-1);
   const [filterCat, setFilterCat] = useState("All");
-  const abortRef = useRef(false);
-  const hasLoaded = useRef(false);
+  const abortRefs = useRef({ hl: false, bn: false, by: false });
+  const loadedRef = useRef({ hl: false, bn: false, by: false });
 
-  const calcAPR = (data) => {
+  const calcAPR = (data, freq) => {
     if (!data.length) return null;
-    return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 24 * 365;
+    return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * freq;
   };
 
-  const fetchWithRetry = async (coin, days, retries = 2) => {
+  const fetchWithRetry = async (fn, retries = 2) => {
     for (let i = 0; i <= retries; i++) {
       try {
         if (i > 0) await new Promise(r => setTimeout(r, 500 * i));
-        const data = await fetchAllFunding(coin, days);
+        const data = await fn();
         if (data.length > 0) return data;
       } catch {}
     }
     return [];
   };
 
-  const runCompare = useCallback(async () => {
-    setLoading(true); abortRef.current = false;
-    const assets = ALL_ASSETS;
-    setProgress({ done: 0, total: assets.length });
-    const out = [];
+  const loadVenue = useCallback(async (vid) => {
+    if (loadedRef.current[vid]) return;
+    loadedRef.current[vid] = true;
+    abortRefs.current[vid] = false;
+
+    const assets = vid === "hl" ? ALL_ASSETS : ARBI_ASSETS;
+    const freq = VENUE_FREQ[vid];
     const CONCURRENCY = 2;
+
+    setLoadingVenues(prev => new Set([...prev, vid]));
+    setProgressMap(prev => ({ ...prev, [vid]: { done: 0, total: assets.length } }));
+
+    const out = [];
     for (let i = 0; i < assets.length; i += CONCURRENCY) {
-      if (abortRef.current) break;
+      if (abortRefs.current[vid]) break;
       const batch = assets.slice(i, i + CONCURRENCY);
       const batchRes = await Promise.all(batch.map(async (coin) => {
         try {
-          const d90 = await fetchWithRetry(coin, 90);
+          let d90 = [];
+          if (vid === "hl") d90 = await fetchWithRetry(() => fetchAllFunding(coin, 90));
+          else if (vid === "bn") d90 = await fetchWithRetry(() => fetchBinanceFundingHistory(coin, 91));
+          else if (vid === "by") d90 = await fetchWithRetry(() => fetchBybitFundingHistory(coin, 91));
+
           const now = Date.now();
-          const d30 = d90.length ? d90.filter(d => d.time >= now - 30*24*3600*1000) : await fetchWithRetry(coin, 30);
-          const d7  = d30.length ? d30.filter(d => d.time >= now - 7*24*3600*1000)  : await fetchWithRetry(coin, 7);
-          return { coin, cat: getCat(coin), apr7: calcAPR(d7), apr30: calcAPR(d30), apr90: calcAPR(d90) };
+          const d30 = d90.filter(d => d.time >= now - 30*24*3600*1000);
+          const d7  = d30.filter(d => d.time >= now - 7*24*3600*1000);
+          return { coin, cat: getCat(coin), apr7: calcAPR(d7, freq), apr30: calcAPR(d30, freq), apr90: calcAPR(d90, freq) };
         } catch { return { coin, cat: getCat(coin), apr7: null, apr30: null, apr90: null }; }
       }));
       out.push(...batchRes);
-      setProgress(p => ({ ...p, done: Math.min(p.total, i + CONCURRENCY) }));
-      setResults([...out]);
+      setProgressMap(prev => ({ ...prev, [vid]: { ...prev[vid], done: Math.min(assets.length, i + CONCURRENCY) } }));
+      setVenueData(prev => ({ ...prev, [vid]: [...out] }));
       if (i + CONCURRENCY < assets.length) await new Promise(r => setTimeout(r, 150));
     }
-    setLoading(false);
+
+    setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
   }, []);
 
-  // Auto-load on first mount
-  useEffect(() => {
-    if (!hasLoaded.current && results.length === 0) {
-      hasLoaded.current = true;
-      runCompare();
-    }
-  }, [runCompare, results.length]);
+  const toggleVenue = (vid) => {
+    setSelectedVenues(prev => {
+      const next = new Set(prev);
+      if (next.has(vid)) {
+        if (next.size === 1) return next; // keep at least one
+        next.delete(vid);
+        // update sort col if it belongs to removed venue
+        setSortCol(sc => sc.startsWith(vid + "_") ? "hl_apr30" : sc);
+      } else {
+        next.add(vid);
+        if (!loadedRef.current[vid]) loadVenue(vid);
+      }
+      return next;
+    });
+  };
+
+  const refreshVenue = (vid) => {
+    loadedRef.current[vid] = false;
+    setVenueData(prev => ({ ...prev, [vid]: null }));
+    loadVenue(vid);
+  };
+
+  // Auto-load HL on mount
+  useEffect(() => { loadVenue("hl"); }, [loadVenue]);
 
   const handleSort = (col) => { if (sortCol === col) setSortDir(d => -d); else { setSortCol(col); setSortDir(-1); } };
 
+  // Build merged rows
+  const allCoins = [...new Set([
+    ...(venueData.hl?.map(r => r.coin) ?? []),
+    ...(venueData.bn?.map(r => r.coin) ?? []),
+    ...(venueData.by?.map(r => r.coin) ?? []),
+  ])];
+
+  const mergedRows = allCoins.map(coin => {
+    const hl = venueData.hl?.find(r => r.coin === coin);
+    const bn = venueData.bn?.find(r => r.coin === coin);
+    const by = venueData.by?.find(r => r.coin === coin);
+    return {
+      coin,
+      cat: hl?.cat ?? bn?.cat ?? by?.cat ?? getCat(coin),
+      hl_apr7: hl?.apr7 ?? null, hl_apr30: hl?.apr30 ?? null, hl_apr90: hl?.apr90 ?? null,
+      bn_apr7: bn?.apr7 ?? null, bn_apr30: bn?.apr30 ?? null, bn_apr90: bn?.apr90 ?? null,
+      by_apr7: by?.apr7 ?? null, by_apr30: by?.apr30 ?? null, by_apr90: by?.apr90 ?? null,
+    };
+  });
+
   const CATS = ["All", ...Object.keys(MARKETS)];
-  const sorted = [...results]
+  const sorted = [...mergedRows]
     .filter(r => filterCat === "All" || r.cat === filterCat)
     .sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
 
-  const aprColor = (v) => {
+  const aprColorFn = (v) => {
     if (v === null) return "#333";
     if (v > 50) return "#00d4aa";
     if (v > 10) return "#7fdfcc";
@@ -760,9 +877,22 @@ function ComparePage({ onNavigate }) {
     return "#ff4d6d";
   };
 
+  // Venue column groups (only selected venues)
+  const venueGroups = VENUES.filter(v2 => selectedVenues.has(v2.id)).map(v2 => ({
+    ...v2,
+    cols: [
+      [`${v2.id}_apr7`, "7j"],
+      [`${v2.id}_apr30`, "30j"],
+      [`${v2.id}_apr90`, "90j"],
+    ],
+  }));
+  const allCols = venueGroups.flatMap(g => g.cols);
+
+  const isLoading = loadingVenues.size > 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 600, color: "#fff", margin: "0 0 3px 0" }}>
             Comparaison APR<span style={{ color: "#4a9eff" }}> · tous les marchés</span>
@@ -770,31 +900,71 @@ function ComparePage({ onNavigate }) {
           <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.08em" }}>APR moyen 7j / 30j / 90j — clic sur colonne pour trier</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button onClick={runCompare} disabled={loading} style={{
-            background: loading ? "transparent" : "#4a9eff22", border: `1px solid ${loading ? "#1e3a5f" : "#4a9eff"}`,
-            borderRadius: 4, color: loading ? "#333" : "#4a9eff",
+          <button onClick={() => { VENUES.forEach(v2 => { if (selectedVenues.has(v2.id)) refreshVenue(v2.id); }); }} disabled={isLoading} style={{
+            background: isLoading ? "transparent" : "#4a9eff22", border: `1px solid ${isLoading ? "#1e3a5f" : "#4a9eff"}`,
+            borderRadius: 4, color: isLoading ? "#333" : "#4a9eff",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
-            padding: "6px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
+            padding: "6px 14px", cursor: isLoading ? "default" : "pointer", letterSpacing: "0.08em",
           }}>⟳ RAFRAÎCHIR</button>
-          {loading && (
-            <button onClick={() => abortRef.current = true} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer" }}>■ STOP</button>
+          {isLoading && (
+            <button onClick={() => { VENUES.forEach(v2 => { abortRefs.current[v2.id] = true; }); }} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer" }}>■ STOP</button>
           )}
         </div>
       </div>
 
-      {/* Progress */}
-      {loading && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 9, color: "#4a9eff", marginBottom: 4, letterSpacing: "0.08em" }}>
-            {progress.done} / {progress.total} assets chargés
-          </div>
-          <div style={{ background: "#0a0a18", border: "1px solid #1e3a5f", borderRadius: 4, height: 3, overflow: "hidden" }}>
-            <div style={{ background: "#4a9eff", height: "100%", width: `${(progress.done / progress.total) * 100}%`, transition: "width 0.3s" }} />
-          </div>
-        </div>
-      )}
+      {/* Venue checkboxes */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase" }}>Venues</span>
+        {VENUES.map(v2 => {
+          const checked = selectedVenues.has(v2.id);
+          const loading2 = loadingVenues.has(v2.id);
+          const prog = progressMap[v2.id];
+          return (
+            <label key={v2.id} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+              <div
+                onClick={() => toggleVenue(v2.id)}
+                style={{
+                  width: 14, height: 14, borderRadius: 3,
+                  border: `1px solid ${checked ? v2.color : "#2a3a5a"}`,
+                  background: checked ? `${v2.color}33` : "transparent",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                {checked && <span style={{ color: v2.color, fontSize: 10, lineHeight: 1, fontWeight: 700 }}>✓</span>}
+              </div>
+              <span
+                onClick={() => toggleVenue(v2.id)}
+                style={{ fontSize: 11, color: checked ? v2.color : "#444", fontFamily: "'IBM Plex Mono', monospace" }}
+              >
+                {v2.label}
+              </span>
+              {loading2 && prog && (
+                <span style={{ fontSize: 9, color: "#333" }}>({prog.done}/{prog.total})</span>
+              )}
+            </label>
+          );
+        })}
+      </div>
 
-      {/* Filter */}
+      {/* Progress bars */}
+      {[...loadingVenues].map(vid => {
+        const prog = progressMap[vid];
+        const vInfo = VENUES.find(v2 => v2.id === vid);
+        if (!prog) return null;
+        return (
+          <div key={vid} style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 9, color: vInfo?.color ?? "#4a9eff", marginBottom: 3, letterSpacing: "0.08em" }}>
+              {vInfo?.label}: {prog.done} / {prog.total} assets
+            </div>
+            <div style={{ background: "#0a0a18", border: "1px solid #1e3a5f", borderRadius: 4, height: 3, overflow: "hidden" }}>
+              <div style={{ background: vInfo?.color ?? "#4a9eff", height: "100%", width: `${(prog.done / prog.total) * 100}%`, transition: "width 0.3s" }} />
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Category filter */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
         {CATS.map(cat => (
           <button key={cat} onClick={() => setFilterCat(cat)} style={{
@@ -813,18 +983,34 @@ function ComparePage({ onNavigate }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 380 }}>
               <thead>
+                {/* Venue group header row */}
+                <tr style={{ borderBottom: "1px solid #0d1525" }}>
+                  <th colSpan={3} style={{ padding: "7px 12px" }} />
+                  {venueGroups.map((g, gi) => (
+                    <th key={g.id} colSpan={3} style={{
+                      padding: "6px 10px", textAlign: "center",
+                      color: g.color, fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600,
+                      borderLeft: gi > 0 ? "1px solid #0d1525" : "1px solid #0d1525",
+                    }}>{g.label}</th>
+                  ))}
+                  <th style={{ padding: "7px 12px", width: 40 }} />
+                </tr>
+                {/* Sub-column row */}
                 <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
                   <th style={{ padding: "10px 12px", textAlign: "left", color: "#333", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 400, width: 28 }}>#</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", color: "#444", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 400 }}>Cat</th>
-                  {[["apr7","APR 7j"],["apr30","APR 30j"],["apr90","APR 90j"]].map(([col, label]) => (
-                    <th key={col} onClick={() => handleSort(col)} style={{
-                      padding: "10px 12px", textAlign: "right",
-                      color: sortCol === col ? "#4a9eff" : "#555",
-                      fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
-                      fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
-                    }}>{label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
-                  ))}
+                  {venueGroups.map((g, gi) =>
+                    g.cols.map(([col, label], ci) => (
+                      <th key={col} onClick={() => handleSort(col)} style={{
+                        padding: "10px 10px", textAlign: "right",
+                        color: sortCol === col ? g.color : "#555",
+                        fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+                        fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
+                        borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid #0d1525" : "none",
+                      }}>{label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
+                    ))
+                  )}
                   <th style={{ padding: "10px 12px", width: 40 }} />
                 </tr>
               </thead>
@@ -834,11 +1020,18 @@ function ComparePage({ onNavigate }) {
                     <td style={{ padding: "7px 12px", color: "#2a2a3a", fontSize: 10 }}>{i + 1}</td>
                     <td style={{ padding: "7px 12px", color: "#e0e0e0", fontWeight: 500 }}>{row.coin}</td>
                     <td style={{ padding: "7px 12px", color: "#444", fontSize: 10 }}>{row.cat}</td>
-                    {["apr7","apr30","apr90"].map(col => (
-                      <td key={col} style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row[col]), fontWeight: sortCol === col ? 600 : 400 }}>
-                        {row[col] !== null ? fmtAPR(row[col]) : "—"}
-                      </td>
-                    ))}
+                    {venueGroups.map((g, gi) =>
+                      g.cols.map(([col], ci) => (
+                        <td key={col} style={{
+                          padding: "7px 10px", textAlign: "right",
+                          color: aprColorFn(row[col]),
+                          fontWeight: sortCol === col ? 600 : 400,
+                          borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid #0d1525" : "none",
+                        }}>
+                          {row[col] !== null ? fmtAPR(row[col]) : "—"}
+                        </td>
+                      ))
+                    )}
                     <td style={{ padding: "7px 12px", textAlign: "center" }}>
                       <button onClick={() => onNavigate(row.coin)} style={{ background: "transparent", border: "1px solid #1e3a5f", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
                     </td>
@@ -852,7 +1045,7 @@ function ComparePage({ onNavigate }) {
             <span>Dernière mise à jour: {new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
           </div>
         </div>
-      ) : !loading && (
+      ) : !isLoading && (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#2a2a3a", fontSize: 11, letterSpacing: "0.1em" }}>
           Chargement des données...
         </div>
@@ -891,9 +1084,9 @@ export default function App() {
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "nowrap" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, overflow: "hidden" }}>
-            <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "#4a9eff", textTransform: "uppercase", flexShrink: 0 }}>Hyperliquid</span>
+            <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "#4a9eff", textTransform: "uppercase", flexShrink: 0 }}>Funding</span>
             <span style={{ color: "#1e3a5f", flexShrink: 0 }}>|</span>
-            <span style={{ fontSize: 10, color: "#333", letterSpacing: "0.08em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>FUNDING RATE EXPLORER</span>
+            <span style={{ fontSize: 10, color: "#333", letterSpacing: "0.08em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>RATE EXPLORER</span>
           </div>
           <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
             {[["explorer","Explorer"],["compare","Comparer"],["arbi","Arbi"]].map(([id, label]) => (
