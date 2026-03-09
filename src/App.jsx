@@ -127,7 +127,7 @@ async function fetchPerpDexs() {
     });
     if (!res.ok) return [];
     const d = await res.json();
-    return Array.isArray(d) ? d : [];
+    return Array.isArray(d) ? d.filter(x => x != null) : [];
   } catch { return []; }
 }
 
@@ -685,9 +685,10 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
             fontWeight: hlDex === null ? 600 : 400,
             padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
           }}>HL (USDC)</button>
-          {perpDexs.map(dx => {
-            const name = dx.name ?? dx;
-            const label = dx.collateral ? `${name} (${dx.collateral})` : name;
+          {perpDexs.map((dx, i) => {
+            const name = (typeof dx === "string" ? dx : dx?.name) ?? String(i);
+            if (!name) return null;
+            const label = dx?.collateral ? `${name} (${dx.collateral})` : name;
             return (
               <button key={name} onClick={() => setHlDex(name)} style={{
                 boxSizing: "border-box",
