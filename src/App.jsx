@@ -22,12 +22,17 @@ const XYZ = new Set([
 
 // ── Venues ────────────────────────────────────────────────────────────────────
 const VENUES = [
-  { id: "hl", label: "Hyperliquid", color: "#4a9eff" },
-  { id: "bn", label: "Binance",     color: "#f0b90b" },
-  { id: "by", label: "Bybit",       color: "#e6a817" },
+  { id: "hl",  label: "Hyperliquid", color: "#4a9eff" },
+  { id: "bn",  label: "Binance",     color: "#f0b90b" },
+  { id: "by",  label: "Bybit",       color: "#e6a817" },
+  { id: "okx", label: "OKX",         color: "#3d7fff" },
+  { id: "dy",  label: "dYdX",        color: "#6966ff" },
+  { id: "lt",  label: "Lighter",     color: "#00d4aa" },
 ];
-// APR freq: HL 1h × 24 × 365, BN/BY 8h × 3 × 365
-const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365 };
+// APR freq: HL/dYdX/Lighter 1h × 24 × 365, BN/BY/OKX 8h × 3 × 365
+const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365, okx: 3 * 365, dy: 24 * 365, lt: 24 * 365 };
+// Venues that only support crypto (not XYZ stocks/FX/commodities)
+const CRYPTO_ONLY_VENUES = new Set(["bn", "by", "okx", "dy", "lt"]);
 
 // Show first N coins as buttons, rest in dropdown
 const VISIBLE_COUNT = 6;
@@ -54,10 +59,13 @@ function getCat(coin) {
   return "Other";
 }
 
-// Binance symbol overrides
+// Symbol overrides / formatters
 const BN_SYMBOL = { "PEPE": "1000PEPE", "kPEPE": "1000PEPE", "SHIB": "1000SHIB", "FLOKI": "1000FLOKI" };
 function bnSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
 function bySym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
+const OKX_SYMBOL = { "kPEPE": "1000PEPE", "PEPE": "1000PEPE", "SHIB": "1000SHIB" };
+function okxSym(c) { return (OKX_SYMBOL[c] ?? c) + "-USDT-SWAP"; }
+function dySym(c) { return c + "-USD"; }
 
 // ── API — Hyperliquid ─────────────────────────────────────────────────────────
 async function fetchAllFunding(coin, days) {
@@ -149,6 +157,141 @@ async function fetchBybitLiveFunding(coin) {
     const d = await res.json();
     const item = d.result?.list?.[0];
     return item ? { funding: item.fundingRate, nextFundingTime: item.nextFundingTime } : null;
+  } catch { return null; }
+}
+
+// ── API — OKX ─────────────────────────────────────────────────────────────────
+async function fetchOkxFundingHistory(coin, days) {
+  try {
+    const startTime = Date.now() - days * 24 * 3600 * 1000;
+    const all = [];
+    let after = "";
+    for (let p = 0; p < 10; p++) {
+      const params = new URLSearchParams({ instId: okxSym(coin), limit: "100" });
+      if (after) params.set("after", after);
+      const res = await fetch(`https://www.okx.com/api/v5/public/funding-rate-history?${params}`);
+      if (!res.ok) return [];
+      const d = await res.json();
+      if (d.code !== "0") return [];
+      const list = d.data ?? [];
+      if (!list.length) break;
+      let stop = false;
+      for (const x of list) {
+        if (+x.fundingTime < startTime) { stop = true; break; }
+        all.push({ time: +x.fundingTime, fundingRate: x.fundingRate, premium: "0" });
+      }
+      if (stop || list.length < 100) break;
+      after = list[list.length - 1].fundingTime;
+    }
+    return all.sort((a, b) => a.time - b.time);
+  } catch { return []; }
+}
+
+async function fetchOkxLiveFunding(coin) {
+  try {
+    const res = await fetch(`https://www.okx.com/api/v5/public/funding-rate?instId=${okxSym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const item = d.data?.[0];
+    return item ? { funding: item.fundingRate, nextFundingTime: +item.nextFundingTime } : null;
+  } catch { return null; }
+}
+
+// ── API — dYdX ────────────────────────────────────────────────────────────────
+async function fetchDydxFundingHistory(coin, days) {
+  try {
+    const startTime = Date.now() - days * 24 * 3600 * 1000;
+    const all = [];
+    let effectiveBeforeOrAt = new Date().toISOString();
+    for (let p = 0; p < 30; p++) {
+      const res = await fetch(
+        `https://indexer.dydx.trade/v4/historicalFunding/${dySym(coin)}?limit=100&effectiveBeforeOrAt=${encodeURIComponent(effectiveBeforeOrAt)}`
+      );
+      if (!res.ok) break;
+      const d = await res.json();
+      const list = d.historicalFunding ?? [];
+      if (!list.length) break;
+      let stop = false;
+      for (const x of list) {
+        const ts = new Date(x.effectiveAt).getTime();
+        if (ts < startTime) { stop = true; break; }
+        all.push({ time: ts, fundingRate: x.rate, premium: "0" });
+      }
+      if (stop || list.length < 100) break;
+      effectiveBeforeOrAt = list[list.length - 1].effectiveAt;
+    }
+    return all.sort((a, b) => a.time - b.time);
+  } catch { return []; }
+}
+
+async function fetchDydxLiveFunding(coin) {
+  try {
+    const res = await fetch(`https://indexer.dydx.trade/v4/perpetualMarkets?ticker=${dySym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const market = d.markets?.[dySym(coin)];
+    return market ? { funding: market.nextFundingRate, nextFundingTime: null } : null;
+  } catch { return null; }
+}
+
+// ── API — Lighter ─────────────────────────────────────────────────────────────
+let _lighterMarkets = null;
+async function getLighterMarketId(coin) {
+  if (!_lighterMarkets) {
+    try {
+      const res = await fetch("https://mainnet.zklighter.elliot.ai/api/v1/orderbooks");
+      if (!res.ok) { _lighterMarkets = {}; return null; }
+      const d = await res.json();
+      _lighterMarkets = {};
+      const list = d.order_books ?? d.orderBooks ?? d.markets ?? d ?? [];
+      if (Array.isArray(list)) {
+        list.forEach(m => {
+          const raw = m.base_token?.symbol ?? m.base_asset ?? m.symbol ?? "";
+          const sym = raw.toUpperCase().replace(/(-USDT?|-USD)$/, "");
+          if (sym && m.market_id != null) _lighterMarkets[sym] = m.market_id;
+        });
+      } else if (typeof list === "object") {
+        Object.entries(list).forEach(([k, v]) => {
+          const sym = k.toUpperCase().replace(/(-USDT?|-USD)$/, "");
+          if (sym) _lighterMarkets[sym] = v?.market_id ?? v;
+        });
+      }
+    } catch { _lighterMarkets = {}; }
+  }
+  return _lighterMarkets[coin] ?? null;
+}
+
+async function fetchLighterFundingHistory(coin, days) {
+  try {
+    const marketId = await getLighterMarketId(coin);
+    if (marketId === null) return [];
+    const startTime = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000);
+    const res = await fetch(
+      `https://mainnet.zklighter.elliot.ai/api/v1/funding-rates?market_id=${marketId}&start_time=${startTime}&limit=500`
+    );
+    if (!res.ok) return [];
+    const d = await res.json();
+    const list = d.funding_rates ?? d.fundingRates ?? (Array.isArray(d) ? d : []);
+    return list.map(x => ({
+      time: (x.timestamp ?? x.time) * 1000,
+      fundingRate: String(x.rate ?? x.funding_rate ?? "0"),
+      premium: "0",
+    })).sort((a, b) => a.time - b.time);
+  } catch { return []; }
+}
+
+async function fetchLighterLiveFunding(coin) {
+  try {
+    const marketId = await getLighterMarketId(coin);
+    if (marketId === null) return null;
+    const res = await fetch(
+      `https://mainnet.zklighter.elliot.ai/api/v1/funding-rates?market_id=${marketId}&limit=1`
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    const list = d.funding_rates ?? d.fundingRates ?? (Array.isArray(d) ? d : []);
+    const last = list[list.length - 1];
+    return last ? { funding: String(last.rate ?? last.funding_rate ?? "0"), nextFundingTime: null } : null;
   } catch { return null; }
 }
 
@@ -316,16 +459,19 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
 
   const loadLive = useCallback(async (c, v) => {
     try {
-      if (v === "hl") setLive(await fetchLiveFunding(c));
-      else if (v === "bn") setLive(await fetchBinanceLiveFunding(c));
-      else if (v === "by") setLive(await fetchBybitLiveFunding(c));
+      if      (v === "hl")  setLive(await fetchLiveFunding(c));
+      else if (v === "bn")  setLive(await fetchBinanceLiveFunding(c));
+      else if (v === "by")  setLive(await fetchBybitLiveFunding(c));
+      else if (v === "okx") setLive(await fetchOkxLiveFunding(c));
+      else if (v === "dy")  setLive(await fetchDydxLiveFunding(c));
+      else if (v === "lt")  setLive(await fetchLighterLiveFunding(c));
       else setLive(null);
     } catch { setLive(null); }
   }, []);
 
   const fetchData = useCallback(async (c, days, v) => {
-    // BN/BY don't support XYZ (stocks/FX/commodities) assets
-    if ((v === "bn" || v === "by") && isXyz(c)) {
+    // Only HL supports XYZ (stocks/FX/commodities) assets
+    if (CRYPTO_ONLY_VENUES.has(v) && isXyz(c)) {
       setData([]); setStats(null); setLive(null);
       setError(`${c} n'est pas disponible sur ${VENUES.find(x => x.id === v)?.label}`);
       return;
@@ -334,9 +480,12 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
     setError(null); setData([]); setStats(null); setLive(null);
     try {
       let raw = [];
-      if (v === "hl") raw = await fetchAllFunding(c, days);
-      else if (v === "bn") raw = await fetchBinanceFundingHistory(c, days);
-      else if (v === "by") raw = await fetchBybitFundingHistory(c, days);
+      if      (v === "hl")  raw = await fetchAllFunding(c, days);
+      else if (v === "bn")  raw = await fetchBinanceFundingHistory(c, days);
+      else if (v === "by")  raw = await fetchBybitFundingHistory(c, days);
+      else if (v === "okx") raw = await fetchOkxFundingHistory(c, days);
+      else if (v === "dy")  raw = await fetchDydxFundingHistory(c, days);
+      else if (v === "lt")  raw = await fetchLighterFundingHistory(c, days);
 
       if (!raw.length) throw new Error(`Aucune donnée pour ${c} sur ${VENUES.find(x => x.id === v)?.label}`);
 
