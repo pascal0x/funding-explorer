@@ -426,90 +426,134 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   );
 }
 
-// ── ARBI (cross-exchange live rates) ──────────────────────────────────────────
-// Crypto assets available on all three exchanges
+// ── ARBI (cross-exchange historical averages) ─────────────────────────────────
 const ARBI_ASSETS = [
   "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF",
   "HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP",
 ];
 
-// Binance symbol overrides (PEPE uses 1000PEPE, etc.)
+// Binance symbol overrides (some coins use multiplier prefix)
 const BN_SYMBOL = { "PEPE": "1000PEPE", "SHIB": "1000SHIB", "FLOKI": "1000FLOKI" };
 function bnSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
 function bySym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
 
-async function fetchBinanceLive(coin) {
+// Fetch Binance historical funding (one call, limit covers 90d @ 8h intervals = ~270 pts)
+async function fetchBinanceHistory(coin) {
   try {
-    const res = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${bnSym(coin)}`);
-    if (!res.ok) return null;
+    const startTime = Date.now() - 91 * 24 * 3600 * 1000;
+    const res = await fetch(
+      `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${bnSym(coin)}&startTime=${startTime}&limit=1000`
+    );
+    if (!res.ok) return [];
     const d = await res.json();
-    return parseFloat(d.lastFundingRate); // per 8h
-  } catch { return null; }
+    return Array.isArray(d) ? d : [];
+  } catch { return []; }
 }
 
-async function fetchBybitLive(coin) {
+// Fetch Bybit historical funding (paginated, newest-first, up to 90d)
+async function fetchBybitHistory(coin) {
   try {
-    const res = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${bySym(coin)}`);
-    if (!res.ok) return null;
-    const d = await res.json();
-    const rate = d.result?.list?.[0]?.fundingRate;
-    return rate != null ? parseFloat(rate) : null; // per 8h
-  } catch { return null; }
+    const startTime = Date.now() - 91 * 24 * 3600 * 1000;
+    const all = [];
+    let cursor = "";
+    for (let p = 0; p < 4; p++) {
+      const params = new URLSearchParams({ category: "linear", symbol: bySym(coin), limit: "200", startTime: String(startTime) });
+      if (cursor) params.set("cursor", cursor);
+      const res = await fetch(`https://api.bybit.com/v5/market/funding/history?${params}`);
+      if (!res.ok) break;
+      const d = await res.json();
+      const list = d.result?.list ?? [];
+      all.push(...list);
+      cursor = d.result?.nextPageCursor ?? "";
+      if (!cursor || list.length < 200) break;
+    }
+    return all;
+  } catch { return []; }
 }
 
-function spreadColor(v) {
+// APR helpers — HL 1h intervals, BN/BY 8h intervals
+function hlAvgAPR(data) {
+  if (!data.length) return null;
+  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 24 * 365;
+}
+function bnAvgAPR(data) {
+  if (!data.length) return null;
+  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 3 * 365;
+}
+function byAvgAPR(data) {
+  if (!data.length) return null;
+  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 3 * 365;
+}
+
+function aprColor(v) {
   if (v === null) return "#333";
-  if (v > 20) return "#00d4aa";
-  if (v > 5) return "#7fdfcc";
-  if (v > -5) return "#888";
-  if (v > -20) return "#ff8fa0";
+  if (v > 50) return "#00d4aa";
+  if (v > 10) return "#7fdfcc";
+  if (v > 0) return "#aaa";
+  if (v > -10) return "#ff8fa0";
   return "#ff4d6d";
 }
 
 function ArbitragePage({ onNavigate }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [sortCol, setSortCol] = useState("hlApr");
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [sortCol, setSortCol] = useState("hl30");
   const [sortDir, setSortDir] = useState(-1);
+  const abortRef = useRef(false);
+  const hasLoaded = useRef(false);
 
-  const load = useCallback(async () => {
+  const runLoad = useCallback(async () => {
     setLoading(true);
-    try {
-      // Fetch all HL live rates in one call
-      const hlRes = await fetch("https://api.hyperliquid.xyz/info", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "metaAndAssetCtxs" }),
-      });
-      const hlData = await hlRes.json();
-      const hlUniverse = hlData[0].universe;
-      const hlCtxs = hlData[1];
+    abortRef.current = false;
+    setRows([]);
+    setProgress({ done: 0, total: ARBI_ASSETS.length });
+    const now = Date.now();
+    const D7  = 7  * 24 * 3600 * 1000;
+    const D30 = 30 * 24 * 3600 * 1000;
+    const out = [];
+    const CONCURRENCY = 2;
 
-      const results = await Promise.all(ARBI_ASSETS.map(async (coin) => {
-        const hlIdx = hlUniverse.findIndex(a => a.name === coin);
-        const hlRate = hlIdx !== -1 ? parseFloat(hlCtxs[hlIdx].funding) : null; // per 1h
-        const hlApr = hlRate !== null ? hlRate * 100 * 24 * 365 : null;
+    for (let i = 0; i < ARBI_ASSETS.length; i += CONCURRENCY) {
+      if (abortRef.current) break;
+      const batch = ARBI_ASSETS.slice(i, i + CONCURRENCY);
+      const batchRes = await Promise.all(batch.map(async (coin) => {
+        try {
+          const [hlRaw, bnRaw, byRaw] = await Promise.all([
+            fetchAllFunding(coin, 90).catch(() => []),
+            fetchBinanceHistory(coin).catch(() => []),
+            fetchBybitHistory(coin).catch(() => []),
+          ]);
 
-        const [bnRate, byRate] = await Promise.all([
-          fetchBinanceLive(coin),
-          fetchBybitLive(coin),
-        ]);
-        const bnApr = bnRate !== null ? bnRate * 100 * 3 * 365 : null;  // 8h → 3/day
-        const byApr = byRate !== null ? byRate * 100 * 3 * 365 : null;
+          const hl7  = hlRaw.filter(d => d.time  >= now - D7);
+          const hl30 = hlRaw.filter(d => d.time  >= now - D30);
+          const bn7  = bnRaw.filter(d => d.fundingTime >= now - D7);
+          const bn30 = bnRaw.filter(d => d.fundingTime >= now - D30);
+          // Bybit timestamps are strings in ms
+          const by7  = byRaw.filter(d => +d.fundingRateTimestamp >= now - D7);
+          const by30 = byRaw.filter(d => +d.fundingRateTimestamp >= now - D30);
 
-        const hlVsBn = hlApr !== null && bnApr !== null ? hlApr - bnApr : null;
-        const hlVsBy = hlApr !== null && byApr !== null ? hlApr - byApr : null;
-
-        return { coin, hlRate, hlApr, bnRate, bnApr, byRate, byApr, hlVsBn, hlVsBy };
+          return {
+            coin,
+            hl7:  hlAvgAPR(hl7),  hl30:  hlAvgAPR(hl30),  hl90:  hlAvgAPR(hlRaw),
+            bn7:  bnAvgAPR(bn7),  bn30:  bnAvgAPR(bn30),  bn90:  bnAvgAPR(bnRaw),
+            by7:  byAvgAPR(by7),  by30:  byAvgAPR(by30),  by90:  byAvgAPR(byRaw),
+          };
+        } catch {
+          return { coin, hl7:null,hl30:null,hl90:null, bn7:null,bn30:null,bn90:null, by7:null,by30:null,by90:null };
+        }
       }));
-
-      setRows(results);
-      setLastUpdate(Date.now());
-    } catch {}
+      out.push(...batchRes);
+      setProgress(p => ({ ...p, done: Math.min(p.total, i + CONCURRENCY) }));
+      setRows([...out]);
+      if (i + CONCURRENCY < ARBI_ASSETS.length) await new Promise(r => setTimeout(r, 200));
+    }
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!hasLoaded.current) { hasLoaded.current = true; runLoad(); }
+  }, [runLoad]);
 
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => -d);
@@ -518,95 +562,106 @@ function ArbitragePage({ onNavigate }) {
 
   const sorted = [...rows].sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
 
-  const aprColor = (v) => {
-    if (v === null) return "#333";
-    if (v > 50) return "#00d4aa";
-    if (v > 10) return "#7fdfcc";
-    if (v > 0) return "#aaa";
-    if (v > -10) return "#ff8fa0";
-    return "#ff4d6d";
-  };
-
-  const cols = [
-    ["hlApr", "HL APR"],
-    ["bnApr", "Binance APR"],
-    ["byApr", "Bybit APR"],
-    ["hlVsBn", "HL − BN"],
-    ["hlVsBy", "HL − BY"],
+  // Column groups: exchange → [key, label]
+  const groups = [
+    { label: "Hyperliquid", color: "#4a9eff", cols: [["hl7","7j"],["hl30","30j"],["hl90","90j"]] },
+    { label: "Binance",     color: "#f0b90b", cols: [["bn7","7j"],["bn30","30j"],["bn90","90j"]] },
+    { label: "Bybit",       color: "#e6a817", cols: [["by7","7j"],["by30","30j"],["by90","90j"]] },
   ];
+  const allCols = groups.flatMap(g => g.cols);
+
+  const thStyle = (col, first) => ({
+    padding: "6px 10px", textAlign: "right",
+    color: sortCol === col ? "#4a9eff" : "#555",
+    fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+    fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
+    borderLeft: first ? "1px solid #0d1525" : "none",
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 600, color: "#fff", margin: "0 0 3px 0" }}>
             Arbitrage<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
           </h2>
           <div style={{ fontSize: 9, color: "#444", letterSpacing: "0.08em" }}>
-            Funding live · HL 1h×24×365 · Binance/Bybit 8h×3×365 · clic colonne pour trier
+            APR moyen 7j / 30j / 90j — HL 1h×24×365 · Binance/Bybit 8h×3×365 · clic colonne pour trier
           </div>
         </div>
-        <button onClick={load} disabled={loading} style={{
-          background: loading ? "transparent" : "#4a9eff22",
-          border: `1px solid ${loading ? "#1e3a5f" : "#4a9eff"}`,
-          borderRadius: 4, color: loading ? "#333" : "#4a9eff",
-          fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
-          padding: "6px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
-        }}>{loading ? "⟳ Chargement..." : "⟳ RAFRAÎCHIR"}</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={runLoad} disabled={loading} style={{
+            background: loading ? "transparent" : "#4a9eff22", border: `1px solid ${loading ? "#1e3a5f" : "#4a9eff"}`,
+            borderRadius: 4, color: loading ? "#333" : "#4a9eff",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+            padding: "6px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
+          }}>⟳ RAFRAÎCHIR</button>
+          {loading && (
+            <button onClick={() => abortRef.current = true} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer" }}>■ STOP</button>
+          )}
+        </div>
       </div>
 
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 9, color: "#555", letterSpacing: "0.06em", flexWrap: "wrap" }}>
-        <span><span style={{ color: "#00d4aa" }}>■</span> &gt;+50% APR</span>
-        <span><span style={{ color: "#7fdfcc" }}>■</span> +10–50%</span>
-        <span><span style={{ color: "#aaa" }}>■</span> 0–10%</span>
-        <span><span style={{ color: "#ff8fa0" }}>■</span> -10–0%</span>
-        <span><span style={{ color: "#ff4d6d" }}>■</span> &lt;-10%</span>
-        <span style={{ marginLeft: "auto" }}>
-          {lastUpdate && `Màj: ${new Date(lastUpdate).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`}
-        </span>
-      </div>
+      {/* Progress */}
+      {loading && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, color: "#4a9eff", marginBottom: 4, letterSpacing: "0.08em" }}>
+            {progress.done} / {progress.total} assets chargés
+          </div>
+          <div style={{ background: "#0a0a18", border: "1px solid #1e3a5f", borderRadius: 4, height: 3, overflow: "hidden" }}>
+            <div style={{ background: "#4a9eff", height: "100%", width: `${(progress.done / progress.total) * 100}%`, transition: "width 0.3s" }} />
+          </div>
+        </div>
+      )}
 
       {sorted.length > 0 ? (
         <div style={{ background: "#0a0a18", border: "1px solid #1e3a5f", borderRadius: 10, overflow: "hidden", flex: "1 1 auto" }}>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 560 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 740 }}>
               <thead>
-                <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
-                  <th style={{ padding: "10px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
-                  {cols.map(([col, label]) => (
-                    <th key={col} onClick={() => handleSort(col)} style={{
-                      padding: "10px 12px", textAlign: "right",
-                      color: sortCol === col ? "#4a9eff" : col.startsWith("hlVs") ? "#6a6a8f" : "#555",
-                      fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
-                      fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
-                      borderLeft: col === "hlVsBn" ? "1px solid #0d1525" : "none",
-                    }}>
-                      {label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}
-                    </th>
+                {/* Group row */}
+                <tr style={{ borderBottom: "1px solid #0d1525" }}>
+                  <th style={{ padding: "7px 12px" }} />
+                  {groups.map((g, gi) => (
+                    <th key={g.label} colSpan={3} style={{
+                      padding: "6px 10px", textAlign: "center",
+                      color: g.color, fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600,
+                      borderLeft: gi > 0 ? "1px solid #0d1525" : "none",
+                    }}>{g.label}</th>
                   ))}
-                  <th style={{ padding: "10px 12px", width: 40 }} />
+                  <th style={{ padding: "7px 12px", width: 40 }} />
+                </tr>
+                {/* Sub-column row */}
+                <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
+                  <th style={{ padding: "8px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
+                  {groups.map((g, gi) =>
+                    g.cols.map(([col, label], ci) => (
+                      <th key={col} onClick={() => handleSort(col)} style={thStyle(col, gi > 0 && ci === 0)}>
+                        {label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}
+                      </th>
+                    ))
+                  )}
+                  <th style={{ padding: "8px 12px", width: 40 }} />
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((row, i) => (
                   <tr key={row.coin} style={{ borderBottom: "1px solid #0d1525", background: i % 2 === 0 ? "transparent" : "#07070f" }}>
                     <td style={{ padding: "7px 12px", color: "#e0e0e0", fontWeight: 500 }}>{row.coin}</td>
-                    <td style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row.hlApr), fontWeight: sortCol === "hlApr" ? 600 : 400 }}>
-                      {row.hlApr !== null ? fmtAPR(row.hlApr) : "—"}
-                    </td>
-                    <td style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row.bnApr), fontWeight: sortCol === "bnApr" ? 600 : 400 }}>
-                      {row.bnApr !== null ? fmtAPR(row.bnApr) : "—"}
-                    </td>
-                    <td style={{ padding: "7px 12px", textAlign: "right", color: aprColor(row.byApr), fontWeight: sortCol === "byApr" ? 600 : 400 }}>
-                      {row.byApr !== null ? fmtAPR(row.byApr) : "—"}
-                    </td>
-                    <td style={{ padding: "7px 12px", textAlign: "right", color: spreadColor(row.hlVsBn), fontWeight: sortCol === "hlVsBn" ? 600 : 400, borderLeft: "1px solid #0d1525" }}>
-                      {row.hlVsBn !== null ? fmtAPR(row.hlVsBn) : "—"}
-                    </td>
-                    <td style={{ padding: "7px 12px", textAlign: "right", color: spreadColor(row.hlVsBy), fontWeight: sortCol === "hlVsBy" ? 600 : 400 }}>
-                      {row.hlVsBy !== null ? fmtAPR(row.hlVsBy) : "—"}
-                    </td>
+                    {allCols.map(([col], ci) => {
+                      const isFirstOfGroup = ci === 3 || ci === 6;
+                      return (
+                        <td key={col} style={{
+                          padding: "7px 10px", textAlign: "right",
+                          color: aprColor(row[col]),
+                          fontWeight: sortCol === col ? 600 : 400,
+                          borderLeft: isFirstOfGroup ? "1px solid #0d1525" : "none",
+                        }}>
+                          {row[col] !== null ? fmtAPR(row[col]) : "—"}
+                        </td>
+                      );
+                    })}
                     <td style={{ padding: "7px 12px", textAlign: "center" }}>
                       <button onClick={() => onNavigate(row.coin)} title="Explorer" style={{ background: "transparent", border: "1px solid #1e3a5f", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
                     </td>
@@ -615,13 +670,13 @@ function ArbitragePage({ onNavigate }) {
               </tbody>
             </table>
           </div>
-          <div style={{ padding: "7px 12px", borderTop: "1px solid #1e3a5f", fontSize: 9, color: "#2a2a3a" }}>
-            {sorted.length} assets · HL vs Binance Futures vs Bybit Linear · — = non disponible
+          <div style={{ padding: "7px 12px", borderTop: "1px solid #1e3a5f", fontSize: 9, color: "#2a2a3a", display: "flex", justifyContent: "space-between" }}>
+            <span>{sorted.length} assets · HL vs Binance Futures vs Bybit Linear · — = non disponible</span>
           </div>
         </div>
-      ) : (
+      ) : !loading && (
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#2a2a3a", fontSize: 11, letterSpacing: "0.1em" }}>
-          {loading ? "⟳ Chargement des données cross-exchange..." : "Aucune donnée"}
+          Chargement des données cross-exchange...
         </div>
       )}
     </div>
