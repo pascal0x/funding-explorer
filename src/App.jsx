@@ -34,6 +34,16 @@ const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365, okx: 3 * 365, dy: 2
 // Venues that only support crypto (not XYZ stocks/FX/commodities)
 const CRYPTO_ONLY_VENUES = new Set(["bn", "by", "okx", "dy", "lt"]);
 
+// Per-venue crypto asset lists (CEX / dYdX / Lighter have limited markets)
+const VENUE_ASSETS = {
+  hl:  MARKETS["Crypto"],
+  bn:  ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"],
+  by:  ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"],
+  okx: ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"],
+  dy:  ["BTC","ETH","SOL","AVAX","LINK","ARB","OP","DOGE","ADA","XRP","LTC","MATIC","UNI","AAVE","CRV","JUP","WIF","PEPE","SUI","APT","BNB"],
+  lt:  ["BTC","ETH","SOL","AVAX","ARB","WIF","SUI","APT","LINK","BNB","HYPE"],
+};
+
 // Show first N coins as buttons, rest in dropdown
 const VISIBLE_COUNT = 6;
 const ALL_ASSETS = [...new Set([
@@ -68,14 +78,15 @@ function okxSym(c) { return (OKX_SYMBOL[c] ?? c) + "-USDT-SWAP"; }
 function dySym(c) { return c + "-USD"; }
 
 // ── API — Hyperliquid ─────────────────────────────────────────────────────────
-async function fetchAllFunding(coin, days) {
+async function fetchAllFunding(coin, days, hlDexName = null) {
   const startTime = Date.now() - days * 24 * 3600 * 1000;
   const allData = [];
   let cursor = startTime;
+  const coinParam = hlDexName ? `${hlDexName}:${coin}` : apiCoin(coin);
   for (let i = 0; i < 30; i++) {
     const res = await fetch("https://api.hyperliquid.xyz/info", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "fundingHistory", coin: apiCoin(coin), startTime: cursor }),
+      body: JSON.stringify({ type: "fundingHistory", coin: coinParam, startTime: cursor }),
     });
     const batch = await res.json();
     if (!Array.isArray(batch) || batch.length === 0) break;
@@ -89,9 +100,9 @@ async function fetchAllFunding(coin, days) {
     .sort((a, b) => a.time - b.time);
 }
 
-async function fetchLiveFunding(coin) {
-  const dex = isXyz(coin) ? "xyz" : undefined;
-  const body = dex ? { type: "metaAndAssetCtxs", dex } : { type: "metaAndAssetCtxs" };
+async function fetchLiveFunding(coin, hlDexName = null) {
+  const effectiveDex = hlDexName ?? (isXyz(coin) ? "xyz" : undefined);
+  const body = effectiveDex ? { type: "metaAndAssetCtxs", dex: effectiveDex } : { type: "metaAndAssetCtxs" };
   const res = await fetch("https://api.hyperliquid.xyz/info", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -99,9 +110,38 @@ async function fetchLiveFunding(coin) {
   const data = await res.json();
   const universe = data[0].universe;
   const ctxs = data[1];
-  const target = isXyz(coin) ? `xyz:${coin}` : coin;
+  const target = hlDexName ? `${hlDexName}:${coin}` : (isXyz(coin) ? `xyz:${coin}` : coin);
   const idx = universe.findIndex(a => a.name === target);
   return idx !== -1 ? ctxs[idx] : null;
+}
+
+// ── API — HL perpDexs (HIP-3 DEXs) ───────────────────────────────────────────
+async function fetchPerpDexs() {
+  try {
+    const res = await fetch("https://api.hyperliquid.xyz/info", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "perpDexs" }),
+    });
+    if (!res.ok) return [];
+    const d = await res.json();
+    return Array.isArray(d) ? d : [];
+  } catch { return []; }
+}
+
+async function fetchDexCoins(dexName) {
+  try {
+    const res = await fetch("https://api.hyperliquid.xyz/info", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "metaAndAssetCtxs", dex: dexName }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const universe = data[0]?.universe ?? [];
+    return universe.map(a => {
+      const idx = a.name.indexOf(":");
+      return idx !== -1 ? a.name.slice(idx + 1) : a.name;
+    }).filter(Boolean);
+  } catch { return []; }
 }
 
 // ── API — Binance ─────────────────────────────────────────────────────────────
@@ -451,6 +491,9 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   const [coin, setCoin] = useState(initialCoin);
   const [inputCoin, setInputCoin] = useState(initialCoin);
   const [venue, setVenue] = useState("hl");
+  const [hlDex, setHlDex] = useState(null);       // null = main HL perps; string = HIP-3 dex name
+  const [perpDexs, setPerpDexs] = useState([]);   // list from perpDexs API
+  const [dexCoins, setDexCoins] = useState([]);   // coins available on current hlDex
   const [period, setPeriod] = useState(7);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -463,9 +506,24 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   const TABLE_SIZE = 50;
   const liveRef = useRef(null);
 
-  const loadLive = useCallback(async (c, v) => {
+  // Load available HIP-3 DEXs once on mount
+  useEffect(() => { fetchPerpDexs().then(setPerpDexs); }, []);
+
+  // When hlDex changes, load its coins and select the first one
+  useEffect(() => {
+    if (hlDex) {
+      fetchDexCoins(hlDex).then(coins => {
+        setDexCoins(coins);
+        if (coins.length > 0) { setCoin(coins[0]); setInputCoin(coins[0]); setTablePage(0); }
+      });
+    } else {
+      setDexCoins([]);
+    }
+  }, [hlDex]);
+
+  const loadLive = useCallback(async (c, v, d) => {
     try {
-      if      (v === "hl")  setLive(await fetchLiveFunding(c));
+      if      (v === "hl")  setLive(await fetchLiveFunding(c, d));
       else if (v === "bn")  setLive(await fetchBinanceLiveFunding(c));
       else if (v === "by")  setLive(await fetchBybitLiveFunding(c));
       else if (v === "okx") setLive(await fetchOkxLiveFunding(c));
@@ -475,7 +533,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
     } catch { setLive(null); }
   }, []);
 
-  const fetchData = useCallback(async (c, days, v) => {
+  const fetchData = useCallback(async (c, days, v, d) => {
     // Only HL supports XYZ (stocks/FX/commodities) assets
     if (CRYPTO_ONLY_VENUES.has(v) && isXyz(c)) {
       setData([]); setStats(null); setLive(null);
@@ -486,7 +544,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
     setError(null); setData([]); setStats(null); setLive(null);
     try {
       let raw = [];
-      if      (v === "hl")  raw = await fetchAllFunding(c, days);
+      if      (v === "hl")  raw = await fetchAllFunding(c, days, d);
       else if (v === "bn")  raw = await fetchBinanceFundingHistory(c, days);
       else if (v === "by")  raw = await fetchBybitFundingHistory(c, days);
       else if (v === "okx") raw = await fetchOkxFundingHistory(c, days);
@@ -496,15 +554,15 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       if (!raw.length) throw new Error(`Aucune donnée pour ${c} sur ${VENUES.find(x => x.id === v)?.label}`);
 
       const freq = VENUE_FREQ[v];
-      const parsed = raw.map(d => ({
-        time: d.time, rate: parseFloat(d.fundingRate) * 100,
-        rawRate: d.fundingRate, rawPremium: d.premium ?? "0",
-        apr: toAPR(d.fundingRate, freq),
-        ratePos: parseFloat(d.fundingRate) >= 0 ? parseFloat(d.fundingRate) * 100 : 0,
-        rateNeg: parseFloat(d.fundingRate) < 0 ? parseFloat(d.fundingRate) * 100 : 0,
+      const parsed = raw.map(dt => ({
+        time: dt.time, rate: parseFloat(dt.fundingRate) * 100,
+        rawRate: dt.fundingRate, rawPremium: dt.premium ?? "0",
+        apr: toAPR(dt.fundingRate, freq),
+        ratePos: parseFloat(dt.fundingRate) >= 0 ? parseFloat(dt.fundingRate) * 100 : 0,
+        rateNeg: parseFloat(dt.fundingRate) < 0 ? parseFloat(dt.fundingRate) * 100 : 0,
       }));
       setData(parsed);
-      const rates = parsed.map(d => d.rate);
+      const rates = parsed.map(dt => dt.rate);
       const avg = rates.reduce((a, b) => a + b, 0) / rates.length;
       const positive = rates.filter(r => r >= 0).length;
       setStats({
@@ -513,20 +571,29 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
         min: Math.min(...rates), minApr: Math.min(...rates) * freq,
         positive: ((positive / rates.length) * 100).toFixed(0), count: rates.length,
       });
-      loadLive(c, v);
+      loadLive(c, v, d);
     } catch (e) { setError(e.message); }
     setLoading(false); setLoadingMsg("");
   }, [loadLive]);
 
   useEffect(() => {
-    fetchData(coin, period, venue);
+    fetchData(coin, period, venue, hlDex);
     if (liveRef.current) clearInterval(liveRef.current);
-    liveRef.current = setInterval(() => loadLive(coin, venue), 60000);
+    liveRef.current = setInterval(() => loadLive(coin, venue, hlDex), 60000);
     return () => clearInterval(liveRef.current);
-  }, [coin, period, venue, fetchData, loadLive]);
+  }, [coin, period, venue, hlDex, fetchData, loadLive]);
 
   const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); setTablePage(0); };
   const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) { setCoin(c); setTablePage(0); } };
+  const handleVenueChange = (v) => {
+    setVenue(v);
+    setHlDex(null);  // reset DEX sub-selector when switching venue
+    if (CRYPTO_ONLY_VENUES.has(v) && category !== "Crypto") {
+      setCategory("Crypto");
+      const firstCoin = VENUE_ASSETS[v][0];
+      setCoin(firstCoin); setInputCoin(firstCoin); setTablePage(0);
+    }
+  };
 
   const tableData = [...data].reverse();
   const totalPages = Math.ceil(tableData.length / TABLE_SIZE);
@@ -542,7 +609,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
           <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 600, color: "#fff", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
             {coin}<span style={{ color: venueInfo?.color ?? "#4a9eff" }}>-PERP</span>
           </span>
-          {isXyz(coin) && venue === "hl" && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3</span>}
+          {venue === "hl" && (hlDex !== null || isXyz(coin)) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3{hlDex ? ` · ${hlDex}` : ""}</span>}
         </div>
         <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
           {[{l:"7j",d:7},{l:"30j",d:30},{l:"90j",d:90}].map(p => (
@@ -562,7 +629,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
         <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Venue</span>
         {VENUES.map(v2 => (
-          <button key={v2.id} onClick={() => setVenue(v2.id)} style={{
+          <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
             boxSizing: "border-box",
             background: venue === v2.id ? `${v2.color}22` : "transparent",
             border: `1px solid ${venue === v2.id ? v2.color : "#1e3a5f"}`,
@@ -575,22 +642,61 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
         ))}
       </div>
 
+      {/* DEX sub-selector — only shown for Hyperliquid when HIP-3 DEXs are available */}
+      {venue === "hl" && perpDexs.length > 0 && (
+        <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>DEX</span>
+          <button onClick={() => setHlDex(null)} style={{
+            boxSizing: "border-box",
+            background: hlDex === null ? "#4a9eff22" : "transparent",
+            border: `1px solid ${hlDex === null ? "#4a9eff" : "#1e3a5f"}`,
+            borderRadius: 4, color: hlDex === null ? "#4a9eff" : "#444",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
+            fontWeight: hlDex === null ? 600 : 400,
+            padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+          }}>HL (USDC)</button>
+          {perpDexs.map(dx => {
+            const name = dx.name ?? dx;
+            const label = dx.collateral ? `${name} (${dx.collateral})` : name;
+            return (
+              <button key={name} onClick={() => setHlDex(name)} style={{
+                boxSizing: "border-box",
+                background: hlDex === name ? "#4a9eff22" : "transparent",
+                border: `1px solid ${hlDex === name ? "#4a9eff" : "#1e3a5f"}`,
+                borderRadius: 4, color: hlDex === name ? "#4a9eff" : "#444",
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
+                fontWeight: hlDex === name ? 600 : 400,
+                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+              }}>{label}</button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Category tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
-        {Object.keys(MARKETS).map(cat => (
-          <button key={cat} onClick={() => { setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
-            background: category === cat ? "#4a9eff" : "transparent",
-            border: `1px solid ${category === cat ? "#4a9eff" : "#1e3a5f"}`,
-            borderRadius: 4, color: category === cat ? "#05050d" : "#555",
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
-            padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
-          }}>{cat}</button>
-        ))}
+        {Object.keys(MARKETS).map(cat => {
+          const disabled = (CRYPTO_ONLY_VENUES.has(venue) || hlDex !== null) && cat !== "Crypto";
+          return (
+            <button key={cat} onClick={() => { if (!disabled) { setCategory(cat); handleCoinSelect(MARKETS[cat][0]); } }} style={{
+              background: category === cat ? "#4a9eff" : "transparent",
+              border: `1px solid ${category === cat ? "#4a9eff" : "#1e3a5f"}`,
+              borderRadius: 4, color: category === cat ? "#05050d" : disabled ? "#2a2a3a" : "#555",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
+              padding: "5px 10px", cursor: disabled ? "not-allowed" : "pointer",
+              letterSpacing: "0.05em", textTransform: "uppercase", opacity: disabled ? 0.35 : 1,
+            }}>{cat}</button>
+          );
+        })}
       </div>
 
       {/* Coin selector + search */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-        <CoinSelector coins={MARKETS[category]} selected={coin} onSelect={handleCoinSelect} />
+        <CoinSelector
+          coins={hlDex ? dexCoins : (CRYPTO_ONLY_VENUES.has(venue) ? VENUE_ASSETS[venue] : MARKETS[category])}
+          selected={coin}
+          onSelect={handleCoinSelect}
+        />
         <div style={{ display: "flex", flexShrink: 0 }}>
           <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
             onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
