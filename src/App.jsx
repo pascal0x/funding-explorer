@@ -28,11 +28,12 @@ const VENUES = [
   { id: "okx", label: "OKX",         color: "#3d7fff" },
   { id: "dy",  label: "dYdX",        color: "#6966ff" },
   { id: "lt",  label: "Lighter",     color: "#00d4aa" },
+  { id: "ad",  label: "Asterdex",    color: "#a855f7" },
 ];
-// APR freq: HL/dYdX/Lighter 1h × 24 × 365, BN/BY/OKX 8h × 3 × 365
-const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365, okx: 3 * 365, dy: 24 * 365, lt: 24 * 365 };
+// APR freq: HL/dYdX/Lighter 1h × 24 × 365, BN/BY/OKX/AD 8h × 3 × 365
+const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365, okx: 3 * 365, dy: 24 * 365, lt: 24 * 365, ad: 3 * 365 };
 // Venues that only support crypto (not XYZ stocks/FX/commodities)
-const CRYPTO_ONLY_VENUES = new Set(["bn", "by", "okx", "dy", "lt"]);
+const CRYPTO_ONLY_VENUES = new Set(["bn", "by", "okx", "dy", "lt", "ad"]);
 
 // Per-venue crypto asset lists (CEX / dYdX / Lighter have limited markets)
 const VENUE_ASSETS = {
@@ -42,6 +43,7 @@ const VENUE_ASSETS = {
   okx: ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"],
   dy:  ["BTC","ETH","SOL","AVAX","LINK","ARB","OP","DOGE","ADA","XRP","LTC","MATIC","UNI","AAVE","CRV","JUP","WIF","PEPE","SUI","APT","BNB"],
   lt:  ["BTC","ETH","SOL","AVAX","ARB","WIF","SUI","APT","LINK","BNB","HYPE"],
+  ad:  ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","WIF","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","JUP"],
 };
 
 // Show first N coins as buttons, rest in dropdown
@@ -73,6 +75,7 @@ function getCat(coin) {
 const BN_SYMBOL = { "PEPE": "1000PEPE", "kPEPE": "1000PEPE", "SHIB": "1000SHIB", "FLOKI": "1000FLOKI" };
 function bnSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
 function bySym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
+function adSym(c) { return (BN_SYMBOL[c] ?? c) + "USDT"; }
 const OKX_SYMBOL = { "kPEPE": "1000PEPE", "PEPE": "1000PEPE", "SHIB": "1000SHIB" };
 function okxSym(c) { return (OKX_SYMBOL[c] ?? c) + "-USDT-SWAP"; }
 function dySym(c) { return c + "-USD"; }
@@ -164,6 +167,31 @@ async function fetchBinanceLiveFunding(coin) {
     if (!res.ok) return null;
     const d = await res.json();
     return { funding: d.lastFundingRate, nextFundingTime: d.nextFundingTime };
+  } catch { return null; }
+}
+
+// ── API — Asterdex (Binance-compatible) ───────────────────────────────────────
+async function fetchAsterdexFundingHistory(coin, days) {
+  try {
+    const startTime = Date.now() - days * 24 * 3600 * 1000;
+    const res = await fetch(
+      `https://fapi.asterdex.com/fapi/v1/fundingRate?symbol=${adSym(coin)}&startTime=${startTime}&limit=1000`
+    );
+    if (!res.ok) return [];
+    const d = await res.json();
+    if (!Array.isArray(d)) return [];
+    return d.map(x => ({ time: x.fundingTime, fundingRate: x.fundingRate, premium: "0" }));
+  } catch { return []; }
+}
+
+async function fetchAsterdexLiveFunding(coin) {
+  try {
+    const res = await fetch(`https://fapi.asterdex.com/fapi/v1/premiumIndex?symbol=${adSym(coin)}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    return d?.lastFundingRate != null
+      ? { funding: d.lastFundingRate, nextFundingTime: d.nextFundingTime }
+      : null;
   } catch { return null; }
 }
 
@@ -529,6 +557,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       else if (v === "okx") setLive(await fetchOkxLiveFunding(c));
       else if (v === "dy")  setLive(await fetchDydxLiveFunding(c));
       else if (v === "lt")  setLive(await fetchLighterLiveFunding(c));
+      else if (v === "ad")  setLive(await fetchAsterdexLiveFunding(c));
       else setLive(null);
     } catch { setLive(null); }
   }, []);
@@ -550,6 +579,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       else if (v === "okx") raw = await fetchOkxFundingHistory(c, days);
       else if (v === "dy")  raw = await fetchDydxFundingHistory(c, days);
       else if (v === "lt")  raw = await fetchLighterFundingHistory(c, days);
+      else if (v === "ad")  raw = await fetchAsterdexFundingHistory(c, days);
 
       if (!raw.length) throw new Error(`Aucune donnée pour ${c} sur ${VENUES.find(x => x.id === v)?.label}`);
 
@@ -1013,15 +1043,15 @@ function ArbitragePage({ onNavigate }) {
 // ── COMPARE ───────────────────────────────────────────────────────────────────
 function ComparePage({ onNavigate }) {
   // Per-venue data storage: { hl: [{coin, cat, apr7, apr30, apr90}], bn: [...], by: [...] }
-  const [venueData, setVenueData] = useState({ hl: null, bn: null, by: null });
+  const [venueData, setVenueData] = useState({ hl: null, bn: null, by: null, ad: null });
   const [loadingVenues, setLoadingVenues] = useState(new Set());
   const [progressMap, setProgressMap] = useState({});
   const [selectedVenues, setSelectedVenues] = useState(new Set(["hl"]));
   const [sortCol, setSortCol] = useState("hl_apr30");
   const [sortDir, setSortDir] = useState(-1);
   const [filterCat, setFilterCat] = useState("All");
-  const abortRefs = useRef({ hl: false, bn: false, by: false });
-  const loadedRef = useRef({ hl: false, bn: false, by: false });
+  const abortRefs = useRef({ hl: false, bn: false, by: false, ad: false });
+  const loadedRef = useRef({ hl: false, bn: false, by: false, ad: false });
 
   const calcAPR = (data, freq) => {
     if (!data.length) return null;
@@ -1061,6 +1091,7 @@ function ComparePage({ onNavigate }) {
           if (vid === "hl") d90 = await fetchWithRetry(() => fetchAllFunding(coin, 90));
           else if (vid === "bn") d90 = await fetchWithRetry(() => fetchBinanceFundingHistory(coin, 91));
           else if (vid === "by") d90 = await fetchWithRetry(() => fetchBybitFundingHistory(coin, 91));
+          else if (vid === "ad") d90 = await fetchWithRetry(() => fetchAsterdexFundingHistory(coin, 91));
 
           const now = Date.now();
           const d30 = d90.filter(d => d.time >= now - 30*24*3600*1000);
@@ -1109,18 +1140,21 @@ function ComparePage({ onNavigate }) {
     ...(venueData.hl?.map(r => r.coin) ?? []),
     ...(venueData.bn?.map(r => r.coin) ?? []),
     ...(venueData.by?.map(r => r.coin) ?? []),
+    ...(venueData.ad?.map(r => r.coin) ?? []),
   ])];
 
   const mergedRows = allCoins.map(coin => {
     const hl = venueData.hl?.find(r => r.coin === coin);
     const bn = venueData.bn?.find(r => r.coin === coin);
     const by = venueData.by?.find(r => r.coin === coin);
+    const ad = venueData.ad?.find(r => r.coin === coin);
     return {
       coin,
-      cat: hl?.cat ?? bn?.cat ?? by?.cat ?? getCat(coin),
+      cat: hl?.cat ?? bn?.cat ?? by?.cat ?? ad?.cat ?? getCat(coin),
       hl_apr7: hl?.apr7 ?? null, hl_apr30: hl?.apr30 ?? null, hl_apr90: hl?.apr90 ?? null,
       bn_apr7: bn?.apr7 ?? null, bn_apr30: bn?.apr30 ?? null, bn_apr90: bn?.apr90 ?? null,
       by_apr7: by?.apr7 ?? null, by_apr30: by?.apr30 ?? null, by_apr90: by?.apr90 ?? null,
+      ad_apr7: ad?.apr7 ?? null, ad_apr30: ad?.apr30 ?? null, ad_apr90: ad?.apr90 ?? null,
     };
   });
 
@@ -1374,7 +1408,7 @@ export default function App() {
         </div>
 
         <div style={{ fontSize: 9, color: "#1a1a2a", textAlign: "right", letterSpacing: "0.08em", marginTop: 12 }}>
-          HYPERLIQUID · BINANCE · BYBIT · APR = RATE × FREQ × 365
+          HYPERLIQUID · BINANCE · BYBIT · ASTERDEX · APR = RATE × FREQ × 365
         </div>
       </div>
     </div>
