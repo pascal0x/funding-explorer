@@ -1414,16 +1414,6 @@ const INTRADAY_WINS = {
 };
 const MA_COLORS = ["#4a9eff", "#00d4aa", "#f0b90b", "#ff4d6d", "#a855f7"];
 
-function toDailyAvg(rawData) {
-  const byDay = {};
-  for (const d of rawData) {
-    const key = new Date(d.time).toISOString().slice(0, 10);
-    (byDay[key] = byDay[key] || []).push(parseFloat(d.fundingRate));
-  }
-  return Object.entries(byDay)
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([day, rates]) => ({ time: +new Date(day), rate: rates.reduce((s, r) => s + r, 0) / rates.length }));
-}
 
 function applyRollingMA(data, windows, freq) {
   return data.map((d, i) => {
@@ -1506,10 +1496,13 @@ function TrendPage() {
       if (!raw.length) throw new Error(`Aucune donnée pour ${c} sur ${VENUES.find(x => x.id === v)?.label}`);
 
       const freq = VENUE_FREQ[v];
-      const winsToUse = m === "daily" ? DAILY_WINS : (INTRADAY_WINS[v] ?? INTRADAY_WINS.bn);
-      const base = m === "daily"
-        ? toDailyAvg(raw)
-        : raw.map(d => ({ time: d.time, rate: parseFloat(d.fundingRate) }));
+      // Periods per day for each venue (used to convert day-windows to period-counts)
+      const ppd = { hl: 24, dy: 24, lt: 24, bn: 3, by: 3, okx: 3, ad: 3 }[v] ?? 24;
+      const winsToUse = m === "daily"
+        ? DAILY_WINS.map(w => ({ ...w, n: w.n * ppd }))   // 7j → 7×24=168 HL periods, 7×3=21 BN periods…
+        : (INTRADAY_WINS[v] ?? INTRADAY_WINS.bn);
+      // Always use raw data points — gives same result as Explorer's simple mean at the last point
+      const base = raw.map(d => ({ time: d.time, rate: parseFloat(d.fundingRate) }));
 
       setChartData(applyRollingMA(base, winsToUse, freq));
     } catch (e) { setError(e.message); }
@@ -1703,9 +1696,7 @@ function TrendPage() {
       {chartData.length > 0 && !loading && (
         <div style={{ marginTop: 6, fontSize: 9, color: "#1e2a3a", textAlign: "right" }}>
           {mode === "daily"
-            ? `${chartData.length} jours · MA90 dispo à partir du ${
-                chartData.find(d => d.ma90 != null) ? fmtDateShort(chartData.find(d => d.ma90 != null).time) : "—"
-              }`
+            ? `${chartData.length} pts bruts · fenêtres en jours × ${({ hl:24,dy:24,lt:24,bn:3,by:3,okx:3,ad:3 }[venue]??24)} périodes/j`
             : `${chartData.length} pts bruts · ${VENUES.find(v2 => v2.id === venue)?.label}`
           }
         </div>
