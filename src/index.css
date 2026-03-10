@@ -8,11 +8,44 @@ html {
   overflow-x: hidden;
 }
 
+/* ── Theme tokens ─────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+  --bg:           #05050d;
+  --bg-card:      #0a0a18;
+  --bg-alt:       #07070f;
+  --bg-dropdown:  #0f0f20;
+  --border:       #1e3a5f;
+  --border-dim:   #111827;
+  --text:         #e0e0e0;
+  --text-dim:     #444;
+  --text-muted:   #555;
+  --text-label:   #333;
+  --ghost:        #2a2a3a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg:           #f0f4f8;
+    --bg-card:      #ffffff;
+    --bg-alt:       #f4f7fb;
+    --bg-dropdown:  #ffffff;
+    --border:       #c8d8ec;
+    --border-dim:   #e2eaf5;
+    --text:         #1a1a2e;
+    --text-dim:     #445566;
+    --text-muted:   #607080;
+    --text-label:   #8898b0;
+    --ghost:        #c8d8e8;
+  }
+}
+
 body {
   width: 100%;
   min-height: 100vh;
   overflow-x: hidden;
-  background: #05050d;
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
 }
 

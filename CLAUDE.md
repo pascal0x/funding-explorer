@@ -131,13 +131,34 @@ La fréquence varie par venue (voir tableau ci-dessus). La constante `VENUE_FREQ
 
 ## Design system
 
-- **Fond** : `#05050d`
+### Thème jour/nuit
+
+L'app suit automatiquement la préférence système (`prefers-color-scheme`). Les couleurs sont définies comme CSS custom properties dans `src/index.css` et référencées via `var(--xxx)` dans les styles inline de `App.jsx`.
+
+| Token CSS | Dark | Light | Usage |
+|-----------|------|-------|-------|
+| `--bg` | `#05050d` | `#f0f4f8` | Fond principal |
+| `--bg-card` | `#0a0a18` | `#ffffff` | Cards, inputs |
+| `--bg-alt` | `#07070f` | `#f4f7fb` | Lignes alternées, tooltips |
+| `--bg-dropdown` | `#0f0f20` | `#ffffff` | Menu déroulant CoinSelector |
+| `--border` | `#1e3a5f` | `#c8d8ec` | Bordures partout |
+| `--border-dim` | `#111827` | `#e2eaf5` | Bordures désactivées |
+| `--text` | `#e0e0e0` | `#1a1a2e` | Texte principal |
+| `--text-dim` | `#444` | `#445566` | Texte atténué |
+| `--text-muted` | `#555` | `#607080` | Texte semi-transparent |
+| `--text-label` | `#333` | `#8898b0` | Labels petits |
+| `--ghost` | `#2a2a3a` | `#c8d8e8` | Texte fantôme, point "off" |
+
+**Couleurs d'accent** (identiques dark/light) :
 - **Bleu primaire** : `#4a9eff`
 - **Positif** : `#00d4aa`
 - **Négatif** : `#ff4d6d`
+
+**Couleurs de venue** (identiques dark/light) : Hyperliquid `#4a9eff`, Binance `#f0b90b`, Bybit `#e6a817`, OKX `#3d7fff`, dYdX `#6966ff`, Lighter `#00d4aa`, Asterdex `#a855f7`
+
 - **Police** : IBM Plex Mono (Google Fonts), monospace, weights 300–600
 - **Boutons actifs** : background `color + "22"` (alpha 13%), border couleur pleine
-- **Boutons inactifs** : transparent, border `#1e3a5f`
+- **Boutons inactifs** : transparent, border `var(--border)`
 
 ---
 
