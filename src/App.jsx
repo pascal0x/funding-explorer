@@ -1397,6 +1397,323 @@ function ComparePage({ onNavigate }) {
   );
 }
 
+// ── TREND (Moving Averages) ───────────────────────────────────────────────────
+const DAILY_WINS = [
+  { key: "ma7",  n: 7,  label: "MA 7j"  },
+  { key: "ma30", n: 30, label: "MA 30j" },
+  { key: "ma90", n: 90, label: "MA 90j" },
+];
+const INTRADAY_WINS = {
+  hl:  [{ key:"p6",  n:6,   label:"6h"  }, { key:"p12", n:12,  label:"12h" }, { key:"p24", n:24,  label:"24h" }, { key:"p72",  n:72,  label:"3j" }, { key:"p168",n:168, label:"7j" }],
+  dy:  [{ key:"p6",  n:6,   label:"6h"  }, { key:"p12", n:12,  label:"12h" }, { key:"p24", n:24,  label:"24h" }, { key:"p72",  n:72,  label:"3j" }],
+  lt:  [{ key:"p6",  n:6,   label:"6h"  }, { key:"p12", n:12,  label:"12h" }, { key:"p24", n:24,  label:"24h" }],
+  bn:  [{ key:"p1",  n:1,   label:"8h"  }, { key:"p3",  n:3,   label:"24h" }, { key:"p9",  n:9,   label:"3j"  }, { key:"p21",  n:21,  label:"7j" }],
+  by:  [{ key:"p1",  n:1,   label:"8h"  }, { key:"p3",  n:3,   label:"24h" }, { key:"p9",  n:9,   label:"3j"  }, { key:"p21",  n:21,  label:"7j" }],
+  okx: [{ key:"p1",  n:1,   label:"8h"  }, { key:"p3",  n:3,   label:"24h" }, { key:"p9",  n:9,   label:"3j"  }, { key:"p21",  n:21,  label:"7j" }],
+  ad:  [{ key:"p1",  n:1,   label:"8h"  }, { key:"p3",  n:3,   label:"24h" }, { key:"p9",  n:9,   label:"3j"  }, { key:"p21",  n:21,  label:"7j" }],
+};
+const MA_COLORS = ["#4a9eff", "#00d4aa", "#f0b90b", "#ff4d6d", "#a855f7"];
+
+function toDailyAvg(rawData) {
+  const byDay = {};
+  for (const d of rawData) {
+    const key = new Date(d.time).toISOString().slice(0, 10);
+    (byDay[key] = byDay[key] || []).push(parseFloat(d.fundingRate));
+  }
+  return Object.entries(byDay)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([day, rates]) => ({ time: +new Date(day), rate: rates.reduce((s, r) => s + r, 0) / rates.length }));
+}
+
+function applyRollingMA(data, windows, freq) {
+  return data.map((d, i) => {
+    const pt = { time: d.time, raw: d.rate * freq };
+    for (const w of windows) {
+      if (i >= w.n - 1) {
+        const avg = data.slice(i - w.n + 1, i + 1).reduce((s, x) => s + x.rate, 0) / w.n;
+        pt[w.key] = avg * freq;
+      } else {
+        pt[w.key] = null;
+      }
+    }
+    return pt;
+  });
+}
+
+function TrendTooltip({ active, payload, wins, activeWins, mode }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div style={{ background: "#07070f", border: "1px solid #1e3a5f55", borderRadius: 8, padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
+      <div style={{ color: "#4a9eff", marginBottom: 5, fontSize: 10 }}>{fmtDateTime(d.time)}</div>
+      {d.raw != null && (
+        <div style={{ color: "#333", marginBottom: 4, fontSize: 10 }}>
+          {mode === "daily" ? "Moy. jour" : "Taux brut"}{" "}
+          <span style={{ color: d.raw >= 0 ? "#2a3a2a" : "#3a2a2a" }}>{fmtAPR(d.raw)}</span>
+        </div>
+      )}
+      {wins.map((w, i) => activeWins.has(w.key) && d[w.key] != null && (
+        <div key={w.key} style={{ marginBottom: 2 }}>
+          <span style={{ color: MA_COLORS[i % MA_COLORS.length] }}>{w.label}</span>
+          <span style={{ color: "#888" }}> {fmtAPR(d[w.key])}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrendPage() {
+  const [category, setCategory] = useState("Crypto");
+  const [coin, setCoin]         = useState("BTC");
+  const [inputCoin, setInputCoin] = useState("BTC");
+  const [venue, setVenue]       = useState("hl");
+  const [mode, setMode]         = useState("daily");    // "daily" | "intraday"
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState(null);
+  const [chartData, setChartData] = useState([]);
+  const [activeWins, setActiveWins] = useState(new Set(["ma7", "ma30", "ma90"]));
+
+  const wins = mode === "daily" ? DAILY_WINS : (INTRADAY_WINS[venue] ?? INTRADAY_WINS.bn);
+
+  // Reset active MA windows when mode or venue changes
+  useEffect(() => {
+    if (mode === "daily") {
+      setActiveWins(new Set(["ma7", "ma30", "ma90"]));
+    } else {
+      const w = INTRADAY_WINS[venue] ?? INTRADAY_WINS.bn;
+      setActiveWins(new Set(w.slice(0, 2).map(x => x.key)));
+    }
+  }, [mode, venue]);
+
+  const load = useCallback(async (c, v, m) => {
+    if (CRYPTO_ONLY_VENUES.has(v) && isXyz(c)) {
+      setError(`${c} n'est pas disponible sur ${VENUES.find(x => x.id === v)?.label}`);
+      setChartData([]); return;
+    }
+    setLoading(true); setError(null); setChartData([]);
+    try {
+      // Fetch enough data to compute largest MA window
+      const days = m === "daily" ? 92 : 32;   // +2 days buffer
+      let raw = [];
+      if      (v === "hl")  raw = await fetchAllFunding(c, days);
+      else if (v === "bn")  raw = await fetchBinanceFundingHistory(c, days);
+      else if (v === "by")  raw = await fetchBybitFundingHistory(c, days);
+      else if (v === "okx") raw = await fetchOkxFundingHistory(c, days);
+      else if (v === "dy")  raw = await fetchDydxFundingHistory(c, days);
+      else if (v === "lt")  raw = await fetchLighterFundingHistory(c, days);
+      else if (v === "ad")  raw = await fetchAsterdexFundingHistory(c, days);
+
+      if (!raw.length) throw new Error(`Aucune donnée pour ${c} sur ${VENUES.find(x => x.id === v)?.label}`);
+
+      const freq = VENUE_FREQ[v];
+      const winsToUse = m === "daily" ? DAILY_WINS : (INTRADAY_WINS[v] ?? INTRADAY_WINS.bn);
+      const base = m === "daily"
+        ? toDailyAvg(raw)
+        : raw.map(d => ({ time: d.time, rate: parseFloat(d.fundingRate) }));
+
+      setChartData(applyRollingMA(base, winsToUse, freq));
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(coin, venue, mode); }, [coin, venue, mode, load]);
+
+  const toggleWin = (key) => setActiveWins(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) { if (next.size > 1) next.delete(key); }
+    else next.add(key);
+    return next;
+  });
+
+  const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); };
+  const handleVenueChange = (vid) => {
+    setVenue(vid);
+    if (vid !== "hl" && category !== "Crypto") {
+      setCategory("Crypto");
+      const available = getVenueCoins(vid, "Crypto");
+      if (available.length > 0 && !available.includes(coin)) { setCoin(available[0]); setInputCoin(available[0]); }
+    }
+  };
+
+  // Last non-null values for each MA
+  const last = chartData.length ? chartData[chartData.length - 1] : null;
+  const activeWinList = wins.filter(w => activeWins.has(w.key));
+  const shortVal = last ? last[activeWinList[0]?.key] : null;
+  const longVal  = last ? last[activeWinList[activeWinList.length - 1]?.key] : null;
+  const signal   = shortVal != null && longVal != null && activeWinList.length > 1
+    ? (shortVal > longVal ? "haussier" : shortVal < longVal ? "baissier" : "neutre")
+    : null;
+
+  const venueColor = VENUES.find(v2 => v2.id === venue)?.color ?? "#4a9eff";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 600, color: "#fff", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+          {coin}<span style={{ color: venueColor }}>-TREND</span>
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[["daily","DAILY MA"],["intraday","INTRADAY MA"]].map(([m, lbl]) => (
+            <button key={m} onClick={() => setMode(m)} style={{
+              boxSizing: "border-box",
+              background: mode === m ? "#4a9eff22" : "transparent",
+              border: `1px solid ${mode === m ? "#4a9eff" : "#1e3a5f"}`,
+              borderRadius: 4, color: mode === m ? "#4a9eff" : "#555",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: mode === m ? 600 : 400,
+              padding: "6px 12px", cursor: "pointer", letterSpacing: "0.05em", whiteSpace: "nowrap",
+            }}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Venue selector */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Venue</span>
+        {VENUES.map(v2 => (
+          <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
+            boxSizing: "border-box",
+            background: venue === v2.id ? `${v2.color}22` : "transparent",
+            border: `1px solid ${venue === v2.id ? v2.color : "#1e3a5f"}`,
+            borderRadius: 4, color: venue === v2.id ? v2.color : "#444",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
+            padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+          }}>{v2.label}</button>
+        ))}
+      </div>
+
+      {/* Category + coin selector */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
+        {Object.keys(MARKETS).map(cat => {
+          const enabled = venue === "hl" || cat === "Crypto";
+          return (
+            <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
+              background: category === cat ? "#4a9eff" : "transparent",
+              border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "#1e3a5f" : "#111827"}`,
+              borderRadius: 4, color: category === cat ? "#05050d" : enabled ? "#555" : "#222",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
+              padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
+              letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
+            }}>{cat}</button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+        <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
+        <div style={{ display: "flex", flexShrink: 0 }}>
+          <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
+            placeholder="Ticker..."
+            style={{ background: "#0a0a18", border: "1px solid #1e3a5f", borderRight: "none", borderRadius: "6px 0 0 6px", color: "#fff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 10px", width: 80, outline: "none" }} />
+          <button onClick={() => handleCoinSelect(inputCoin.trim().toUpperCase())} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "#05050d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
+        </div>
+      </div>
+
+      {/* MA window toggles */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>
+          {mode === "daily" ? "Fenêtre (jours)" : "Fenêtre (périodes)"}
+        </span>
+        {wins.map((w, i) => {
+          const color = MA_COLORS[i % MA_COLORS.length];
+          const active = activeWins.has(w.key);
+          return (
+            <button key={w.key} onClick={() => toggleWin(w.key)} style={{
+              boxSizing: "border-box",
+              background: active ? `${color}22` : "transparent",
+              border: `1px solid ${active ? color : "#1e3a5f"}`,
+              borderRadius: 4, color: active ? color : "#333",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
+              padding: "4px 10px", cursor: "pointer", letterSpacing: "0.05em",
+            }}>{w.label}</button>
+          );
+        })}
+      </div>
+
+      {/* Stats cards */}
+      {last && activeWinList.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 12 }}>
+          {activeWinList.map((w, i) => {
+            const color = MA_COLORS[i % MA_COLORS.length];
+            const val = last[w.key];
+            if (val == null) return null;
+            return (
+              <StatCard key={w.key} label={w.label}
+                value={<span style={{ color: val >= 0 ? "#00d4aa" : "#ff4d6d" }}>{fmtAPR(val)}</span>}
+                sub={`rate: ${(val / VENUE_FREQ[venue]).toFixed(4)}%`}
+                color={color}
+              />
+            );
+          })}
+          {signal && (
+            <StatCard label="Signal"
+              value={<span style={{ color: signal === "haussier" ? "#00d4aa" : signal === "baissier" ? "#ff4d6d" : "#888" }}>
+                {signal === "haussier" ? "↑ BULL" : signal === "baissier" ? "↓ BEAR" : "◆ FLAT"}
+              </span>}
+              sub={`${activeWinList[0]?.label} vs ${activeWinList[activeWinList.length - 1]?.label}`}
+              color="#555"
+            />
+          )}
+        </div>
+      )}
+
+      {/* Chart */}
+      <div style={{ background: "#07070f", border: "1px solid #0d1a2e", borderRadius: 8, padding: "12px 4px 4px 0", flex: 1, minHeight: 260 }}>
+        {loading && (
+          <div style={{ height: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff44", fontSize: 11, letterSpacing: "0.15em" }}>
+            CALCUL DES MOYENNES…
+          </div>
+        )}
+        {error && !loading && (
+          <div style={{ height: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11 }}>
+            ▲ {error}
+          </div>
+        )}
+        {!loading && !error && chartData.length > 0 && (
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="2 6" stroke="#0d1a2e" vertical={false} />
+              <XAxis dataKey="time" type="number" domain={["dataMin","dataMax"]} scale="time"
+                tickFormatter={fmtDateShort}
+                tick={{ fill: "#2a3a5a", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
+                axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={v => v.toFixed(1) + "%"}
+                tick={{ fill: "#2a3a5a", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
+                axisLine={false} tickLine={false} width={46} />
+              <ReferenceLine y={0} stroke="#1e3a5f" strokeDasharray="4 4" />
+              <Tooltip content={<TrendTooltip wins={wins} activeWins={activeWins} mode={mode} />} />
+              {/* Raw / daily avg as very faint area */}
+              <Area dataKey="raw" stroke="#ffffff0a" fill="#ffffff06" dot={false} activeDot={false} isAnimationActive={false} />
+              {/* MA lines */}
+              {wins.map((w, i) => activeWins.has(w.key) && (
+                <Line key={w.key} type="monotone" dataKey={w.key}
+                  stroke={MA_COLORS[i % MA_COLORS.length]}
+                  strokeWidth={1.5 + i * 0.4}
+                  dot={false} activeDot={{ r: 3 }}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              ))}
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Footer info */}
+      {chartData.length > 0 && !loading && (
+        <div style={{ marginTop: 6, fontSize: 9, color: "#1e2a3a", textAlign: "right" }}>
+          {mode === "daily"
+            ? `${chartData.length} jours · MA90 dispo à partir du ${
+                chartData.find(d => d.ma90 != null) ? fmtDateShort(chartData.find(d => d.ma90 != null).time) : "—"
+              }`
+            : `${chartData.length} pts bruts · ${VENUES.find(v2 => v2.id === venue)?.label}`
+          }
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState("explorer");
@@ -1432,7 +1749,7 @@ export default function App() {
             <span style={{ fontSize: 10, color: "#333", letterSpacing: "0.08em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>RATE EXPLORER</span>
           </div>
           <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            {[["explorer","Explorer"],["compare","Comparer"],["arbi","Arbi"]].map(([id, label]) => (
+            {[["explorer","Explorer"],["trend","Trend"],["compare","Comparer"],["arbi","Arbi"]].map(([id, label]) => (
               <button key={id} onClick={() => setPage(id)} style={{
                 boxSizing: "border-box",
                 background: page === id ? "#4a9eff" : "transparent",
@@ -1449,6 +1766,8 @@ export default function App() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
           {page === "explorer"
             ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} />
+            : page === "trend"
+            ? <TrendPage />
             : page === "compare"
             ? <ComparePage onNavigate={navigateToExplorer} />
             : <ArbitragePage onNavigate={navigateToExplorer} />
