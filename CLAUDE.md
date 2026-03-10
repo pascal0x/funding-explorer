@@ -162,16 +162,28 @@ L'app suit automatiquement la préférence système (`prefers-color-scheme`). Le
 
 ---
 
+## Navigation
+
+Sidebar collapsible à gauche (largeur 200px ouverte, 52px fermée) :
+- Bouton toggle `☰` en haut
+- Items : Explorer `◈`, Trend `⟲`, Compare `⊞`, Spread `⇌`
+- Item actif : fond `#4a9eff22`, bordure gauche bleue, texte bleu
+- Bas de sidebar (visible si ouverte) : version, "built by psql", bouton thème `◑ auto / ● dark / ☀ light` (cycle auto→dark→light→auto via `data-theme` sur `<html>`)
+
 ## Structure des sélecteurs (UI)
 
-Chaque page a des sélecteurs avec labels en petites majuscules :
+Labels en petites majuscules, layout deux colonnes dans Explorer :
 
 ```
-Venue    → [HL] [BN] [BY] ...
-HIP-3    → [USDC] [FELIX] ...   (HL uniquement, si DEXs disponibles)
-Marché   → [CRYPTO] [STOCKS] [FX] [COMMODITIES]
-Actif    → [BTC] [ETH] [SOL] ...   + champ de recherche libre [GO]
+Venue    → [Hyperliquid] [Binance] [Bybit] ...         ← colonne gauche
+HIP-3    → [USDC] [FELIX] ...   (HL uniquement)        ← colonne gauche
+Market   → [CRYPTO] [STOCKS] [FX] [COMMODITIES]        ← colonne gauche
+Asset    → [BTC] [ETH] [SOL] ...                       ← colonne gauche
+                              [7d] [30d] [90d]          ← colonne droite
+                              [Ticker...] [GO]          ← colonne droite
 ```
+
+**Langues** : UI entièrement en anglais (labels, messages, tooltips).
 
 ---
 
