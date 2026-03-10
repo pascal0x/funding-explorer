@@ -722,7 +722,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       {/* DEX sub-selector — only shown for Hyperliquid when HIP-3 DEXs are available */}
       {venue === "hl" && perpDexs.length > 0 && (
         <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Collateral</span>
+          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>HIP-3</span>
           <button onClick={() => setHlDex(null)} style={{
             boxSizing: "border-box",
             background: hlDex === null ? "#4a9eff22" : "transparent",
@@ -752,7 +752,8 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       )}
 
       {/* Category tabs — non-Crypto disabled for non-HL venues or named dex */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Marché</span>
         {Object.keys(MARKETS).map(cat => {
           const enabled = venue === "hl" && hlDex === null || cat === "Crypto";
           return (
@@ -770,11 +771,14 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
 
       {/* Coin selector + search */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-        <CoinSelector
-          coins={hlDex ? dexCoins : getVenueCoins(venue, category)}
-          selected={coin}
-          onSelect={handleCoinSelect}
-        />
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Actif</span>
+          <CoinSelector
+            coins={hlDex ? dexCoins : getVenueCoins(venue, category)}
+            selected={coin}
+            onSelect={handleCoinSelect}
+          />
+        </div>
         <div style={{ display: "flex", flexShrink: 0 }}>
           <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
             onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
@@ -1576,7 +1580,8 @@ function TrendPage() {
       </div>
 
       {/* Category + coin selector */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Marché</span>
         {Object.keys(MARKETS).map(cat => {
           const enabled = venue === "hl" || cat === "Crypto";
           return (
@@ -1592,7 +1597,10 @@ function TrendPage() {
         })}
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-        <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Actif</span>
+          <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
+        </div>
         <div style={{ display: "flex", flexShrink: 0 }}>
           <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
             onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
