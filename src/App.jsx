@@ -688,10 +688,9 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
         {venue === "hl" && (hlDex !== null || isXyz(coin)) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3{hlDex ? ` · ${hlDex}` : ""}</span>}
       </div>
 
-      {/* Two-column selectors layout */}
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 14 }}>
-        {/* Left column: venue + HIP-3 + category + coin selectors */}
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Selectors */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {/* Venue selector */}
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Venue</span>
@@ -769,28 +768,6 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
             />
           </div>
         </div>
-
-        {/* Right column: period + search */}
-        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
-              <button key={p.d} onClick={() => setPeriod(p.d)} style={{
-                boxSizing: "border-box",
-                background: period === p.d ? "#4a9eff22" : "transparent",
-                border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
-                borderRadius: 4, color: period === p.d ? "#4a9eff" : "#555",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 12px", cursor: "pointer",
-                whiteSpace: "nowrap",
-              }}>{p.l}</button>
-            ))}
-          </div>
-          <div style={{ display: "flex" }}>
-            <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-              onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
-              style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 10px", width: 80, outline: "none" }} />
-            <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
-          </div>
-        </div>
       </div>
 
       {/* Stats */}
@@ -808,6 +785,28 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
           <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
         </div>
       )}
+
+      {/* Period + search — above chart */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
+            <button key={p.d} onClick={() => setPeriod(p.d)} style={{
+              boxSizing: "border-box",
+              background: period === p.d ? "#4a9eff22" : "transparent",
+              border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
+              borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 12px", cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}>{p.l}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex" }}>
+          <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 10px", width: 100, outline: "none" }} />
+          <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
+        </div>
+      </div>
 
       {/* Chart */}
       {(() => {
@@ -835,12 +834,12 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#0d1d35" vertical={false} />
-                  <XAxis dataKey="time" tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+                  <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} scale="time" tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
                   <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#333", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
                   <Tooltip content={<CustomTooltip />} />
                   <ReferenceLine y={0} stroke="#2a4a6f" strokeDasharray="3 3" />
                   {dayBoundaries.map(t => (
-                    <ReferenceLine key={t} x={t} stroke="var(--border)" strokeOpacity={0.5} strokeDasharray="2 6" />
+                    <ReferenceLine key={t} x={t} stroke="#4a9eff" strokeOpacity={0.2} strokeDasharray="2 6" />
                   ))}
                   <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
                   <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
