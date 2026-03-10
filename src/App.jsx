@@ -434,7 +434,7 @@ const CustomTooltip = ({ active, payload }) => {
     <div style={{ background: "var(--bg-alt)", border: `1px solid ${p ? "#00d4aa55" : "#ff4d6d55"}`, borderRadius: 8, padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
       <div style={{ color: "#4a9eff", marginBottom: 5, fontSize: 10 }}>{fmtDateTime(d.time)}</div>
       <div style={{ marginBottom: 2 }}>Rate <span style={{ color: p ? "#00d4aa" : "#ff4d6d", fontWeight: 600 }}>{fmtRate(d.rawRate)}</span></div>
-      <div style={{ color: "#666", marginBottom: 2 }}>Premium <span style={{ color: "#888" }}>{(parseFloat(d.rawPremium) * 100).toFixed(4)}%</span></div>
+      <div style={{ color: "#666", marginBottom: 2 }}>Premium <span style={{ color: "#bbb" }}>{(parseFloat(d.rawPremium) * 100).toFixed(4)}%</span></div>
       <div style={{ color: "#666" }}>APR <span style={{ color: p ? "#00d4aa" : "#ff4d6d", fontWeight: 600 }}>{fmtAPR(d.apr)}</span></div>
     </div>
   );
@@ -462,7 +462,7 @@ function CoinSelector({ coins, selected, onSelect }) {
           background: selected === c ? "#4a9eff22" : "transparent",
           border: `1px solid ${selected === c ? "#4a9eff" : "var(--border)"}`,
           borderRadius: 4,
-          color: selected === c ? "#4a9eff" : "#888",
+          color: selected === c ? "#4a9eff" : "#bbb",
           fontFamily: "'IBM Plex Mono', monospace",
           fontSize: 10,
           padding: "5px 10px",
@@ -483,7 +483,7 @@ function CoinSelector({ coins, selected, onSelect }) {
               background: restSelected ? "#4a9eff22" : "transparent",
               border: `1px solid ${restSelected ? "#4a9eff" : open ? "#4a9eff55" : "var(--border)"}`,
               borderRadius: 4,
-              color: restSelected ? "#4a9eff" : "#888",
+              color: restSelected ? "#4a9eff" : "#bbb",
               fontFamily: "'IBM Plex Mono', monospace",
               fontSize: 10,
               padding: "5px 7px 5px 9px",
@@ -498,7 +498,7 @@ function CoinSelector({ coins, selected, onSelect }) {
               width: 0, height: 0,
               borderLeft: "4px solid transparent",
               borderRight: "4px solid transparent",
-              borderTop: `5px solid ${restSelected ? "#4a9eff" : "#888"}`,
+              borderTop: `5px solid ${restSelected ? "#4a9eff" : "#bbb"}`,
               transition: "transform 0.15s",
               transform: open ? "rotate(180deg)" : "rotate(0deg)",
               flexShrink: 0,
@@ -536,7 +536,7 @@ function CoinSelector({ coins, selected, onSelect }) {
                       background: selected === c ? "#4a9eff18" : "transparent",
                       border: "none",
                       borderBottom: "1px solid #0d1525",
-                      color: selected === c ? "#4a9eff" : "#888",
+                      color: selected === c ? "#4a9eff" : "#bbb",
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontSize: 11,
                       padding: "8px 14px",
@@ -545,7 +545,7 @@ function CoinSelector({ coins, selected, onSelect }) {
                       lineHeight: 1,
                     }}
                     onMouseEnter={e => { e.currentTarget.style.background = "#1e1e35"; e.currentTarget.style.color = "#ddd"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = selected === c ? "#4a9eff18" : "transparent"; e.currentTarget.style.color = selected === c ? "#4a9eff" : "#888"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = selected === c ? "#4a9eff18" : "transparent"; e.currentTarget.style.color = selected === c ? "#4a9eff" : "#bbb"; }}
                   >{c}</button>
                 ))}
               </div>
@@ -700,7 +700,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                 background: venue === v2.id ? `${v2.color}22` : "transparent",
                 border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
                 borderRadius: 4,
-                color: venue === v2.id ? v2.color : "#888",
+                color: venue === v2.id ? v2.color : "#bbb",
                 fontFamily: "'IBM Plex Mono', monospace",
                 fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
                 padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
@@ -716,7 +716,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                 boxSizing: "border-box",
                 background: hlDex === null ? "#4a9eff22" : "transparent",
                 border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
-                borderRadius: 4, color: hlDex === null ? "#4a9eff" : "#888",
+                borderRadius: 4, color: hlDex === null ? "#4a9eff" : "#bbb",
                 fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
                 fontWeight: hlDex === null ? 600 : 400,
                 padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
@@ -730,7 +730,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                     boxSizing: "border-box",
                     background: hlDex === name ? "#4a9eff22" : "transparent",
                     border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
-                    borderRadius: 4, color: hlDex === name ? "#4a9eff" : "#888",
+                    borderRadius: 4, color: hlDex === name ? "#4a9eff" : "#bbb",
                     fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
                     fontWeight: hlDex === name ? 600 : 400,
                     padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
@@ -749,7 +749,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                 <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
                   background: category === cat ? "#4a9eff" : "transparent",
                   border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
-                  borderRadius: 4, color: category === cat ? "var(--bg)" : enabled ? "#888" : "#222",
+                  borderRadius: 4, color: category === cat ? "var(--bg)" : enabled ? "#bbb" : "#222",
                   fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
                   padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
                   letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
@@ -772,7 +772,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
 
       {/* Stats + controls row */}
       {stats && (
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, width: "100%" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 12, width: "100%" }}>
           <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
             <StatCard
               label="Realtime" live={!!live}
@@ -836,7 +836,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#0d1d35" vertical={false} />
                   <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-                  <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#888", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
+                  <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#bbb", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
                   <Tooltip content={<CustomTooltip />} />
                   <ReferenceLine y={0} stroke="#2a4a6f" strokeDasharray="3 3" />
                   <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
@@ -844,7 +844,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                   <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "var(--bg)", strokeWidth: 2 }} />
                   {dayBoundaries.map(t => (
                     <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6" ifOverflowVisible
-                      label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "insideTopRight", fill: "#4a9effaa", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
+                      label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "insideBottomRight", fill: "#4a9effaa", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
                     />
                   ))}
                 </ComposedChart>
@@ -857,8 +857,8 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       {/* Table */}
       {data.length > 0 && (
         <div style={{ marginBottom: 8 }}>
-          <button onClick={() => { setShowTable(v2 => !v2); setTablePage(0); }} style={{ background: showTable ? "#4a9eff22" : "transparent", border: "1px solid var(--border)", borderRadius: 4, color: showTable ? "#4a9eff" : "#888", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            {showTable ? "▲ Hide" : "▼ Raw Data"}
+          <button onClick={() => { setShowTable(v2 => !v2); setTablePage(0); }} style={{ background: showTable ? "#4a9eff22" : "transparent", border: "1px solid var(--border)", borderRadius: 4, color: showTable ? "#4a9eff" : "#bbb", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            {showTable ? "▲ Hide" : "▼ Display the funding fee history"}
           </button>
         </div>
       )}
@@ -890,9 +890,9 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
             </table>
           </div>
           <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border)", alignItems: "center" }}>
-            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage === 0 ? "#222" : "#888", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
+            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage === 0 ? "#222" : "#bbb", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
             <span style={{ fontSize: 10, color: "var(--text-label)" }}>{tablePage + 1} / {totalPages}</span>
-            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage >= totalPages - 1 ? "#222" : "#888", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
+            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage >= totalPages - 1 ? "#222" : "#bbb", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
             <span style={{ fontSize: 9, color: "var(--ghost)", marginLeft: "auto" }}>{tableData.length} entries</span>
           </div>
         </div>
@@ -1006,7 +1006,7 @@ function ArbitragePage({ onNavigate }) {
 
   const thStyle = (col, first) => ({
     padding: "6px 10px", textAlign: "right",
-    color: sortCol === col ? "#4a9eff" : "#888",
+    color: sortCol === col ? "#4a9eff" : "#bbb",
     fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
     fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
     borderLeft: first ? "1px solid #0d1525" : "none",
@@ -1303,7 +1303,7 @@ function ComparePage({ onNavigate }) {
               </div>
               <span
                 onClick={() => toggleVenue(v2.id)}
-                style={{ fontSize: 11, color: checked ? v2.color : "#888", fontFamily: "'IBM Plex Mono', monospace" }}
+                style={{ fontSize: 11, color: checked ? v2.color : "#bbb", fontFamily: "'IBM Plex Mono', monospace" }}
               >
                 {v2.label}
               </span>
@@ -1338,7 +1338,7 @@ function ComparePage({ onNavigate }) {
           <button key={cat} onClick={() => setFilterCat(cat)} style={{
             background: filterCat === cat ? "#4a9eff22" : "transparent",
             border: `1px solid ${filterCat === cat ? "#4a9eff" : "var(--border)"}`,
-            borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "#888",
+            borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "#bbb",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
             padding: "5px 10px", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.05em",
           }}>{cat}</button>
@@ -1372,7 +1372,7 @@ function ComparePage({ onNavigate }) {
                     g.cols.map(([col, label], ci) => (
                       <th key={col} onClick={() => handleSort(col)} style={{
                         padding: "10px 10px", textAlign: "right",
-                        color: sortCol === col ? g.color : "#888",
+                        color: sortCol === col ? g.color : "#bbb",
                         fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
                         fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
                         borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid #0d1525" : "none",
@@ -1470,7 +1470,7 @@ function TrendTooltip({ active, payload, wins, activeWins, mode }) {
       {wins.map((w, i) => activeWins.has(w.key) && d[w.key] != null && (
         <div key={w.key} style={{ marginBottom: 2 }}>
           <span style={{ color: MA_COLORS[i % MA_COLORS.length] }}>{w.label}</span>
-          <span style={{ color: "#888" }}> {fmtAPR(d[w.key])}</span>
+          <span style={{ color: "#bbb" }}> {fmtAPR(d[w.key])}</span>
         </div>
       ))}
     </div>
@@ -1577,7 +1577,7 @@ function TrendPage() {
               boxSizing: "border-box",
               background: mode === m ? "#4a9eff22" : "transparent",
               border: `1px solid ${mode === m ? "#4a9eff" : "var(--border)"}`,
-              borderRadius: 4, color: mode === m ? "#4a9eff" : "#888",
+              borderRadius: 4, color: mode === m ? "#4a9eff" : "#bbb",
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: mode === m ? 600 : 400,
               padding: "6px 12px", cursor: "pointer", letterSpacing: "0.05em", whiteSpace: "nowrap",
             }}>{lbl}</button>
@@ -1593,7 +1593,7 @@ function TrendPage() {
             boxSizing: "border-box",
             background: venue === v2.id ? `${v2.color}22` : "transparent",
             border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
-            borderRadius: 4, color: venue === v2.id ? v2.color : "#888",
+            borderRadius: 4, color: venue === v2.id ? v2.color : "#bbb",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
             padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
           }}>{v2.label}</button>
@@ -1609,7 +1609,7 @@ function TrendPage() {
             <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
               background: category === cat ? "#4a9eff" : "transparent",
               border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
-              borderRadius: 4, color: category === cat ? "var(--bg)" : enabled ? "#888" : "#222",
+              borderRadius: 4, color: category === cat ? "var(--bg)" : enabled ? "#bbb" : "#222",
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
               padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
               letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
@@ -1669,11 +1669,11 @@ function TrendPage() {
           })}
           {signal && (
             <StatCard label="Signal"
-              value={<span style={{ color: signal === "haussier" ? "#00d4aa" : signal === "baissier" ? "#ff4d6d" : "#888" }}>
+              value={<span style={{ color: signal === "haussier" ? "#00d4aa" : signal === "baissier" ? "#ff4d6d" : "#bbb" }}>
                 {signal === "haussier" ? "↑ BULL" : signal === "baissier" ? "↓ BEAR" : "◆ FLAT"}
               </span>}
               sub={`${activeWinList[0]?.label} vs ${activeWinList[activeWinList.length - 1]?.label}`}
-              color="#888"
+              color="#bbb"
             />
           )}
         </div>
