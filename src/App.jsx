@@ -4,6 +4,16 @@ import {
   ResponsiveContainer, ReferenceLine, CartesianGrid
 } from "recharts";
 
+function useIsMobile(bp = 640) {
+  const [m, setM] = useState(() => typeof window !== "undefined" && window.innerWidth < bp);
+  useEffect(() => {
+    const fn = () => setM(window.innerWidth < bp);
+    window.addEventListener("resize", fn, { passive: true });
+    return () => window.removeEventListener("resize", fn);
+  }, [bp]);
+  return m;
+}
+
 // ── Markets (no JP225/KR200 — no data; use EWJ/EWY instead) ─────────────────
 const MARKETS = {
   "Crypto":      ["HYPE","BTC","ETH","SOL","AVAX","ARB","OP","MATIC","DYDX","BNB","WIF","LINK","SUI","APT","SPX","kPEPE"],
@@ -709,6 +719,7 @@ function CoinSelector({ coins, selected, onSelect }) {
 
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
 function ExplorerPage({ initialCoin = "HYPE" }) {
+  const isMobile = useIsMobile();
   const initCat = () => { for (const [c, l] of Object.entries(MARKETS)) if (l.includes(initialCoin)) return c; return "Crypto"; };
   const [category, setCategory] = useState(initCat);
   const [coin, setCoin] = useState(initialCoin);
@@ -922,39 +933,62 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
 
       {/* Stats + controls row */}
       {stats && (
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 12, width: "100%" }}>
-          <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
-            <StatCard
-              label="Realtime" live={!!live}
-              value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#00d4aa" : "#ff4d6d" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
-              sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "Pending..."}
-              color="var(--text)"
-            />
-            <StatCard label={`Avg ${period}d`} value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
-            <StatCard label={`Max ${period}d`} value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#00d4aa" />
-            <StatCard label={`Min ${period}d`} value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ff4d6d" />
-            <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
-          </div>
-          {/* Period + search */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-            <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ marginBottom: 12, width: "100%" }}>
+          {/* On mobile: period + search in a compact top row */}
+          {isMobile && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
               {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
                 <button key={p.d} onClick={() => setPeriod(p.d)} style={{
-                  boxSizing: "border-box", flex: 1,
+                  boxSizing: "border-box",
                   background: period === p.d ? "#4a9eff22" : "transparent",
                   border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
                   borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 10px", cursor: "pointer",
-                  whiteSpace: "nowrap",
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "6px 12px", cursor: "pointer",
                 }}>{p.l}</button>
               ))}
-            </div>
-            <div style={{ display: "flex" }}>
+              <div style={{ flex: 1 }} />
               <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
                 onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
-                style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", outline: "none" }} />
-              <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>GO</button>
+                style={{ width: 80, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "6px 8px", outline: "none" }} />
+              <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
             </div>
+          )}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, width: "100%" }}>
+            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
+              <StatCard
+                label="Realtime" live={!!live}
+                value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#00d4aa" : "#ff4d6d" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
+                sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "Pending..."}
+                color="var(--text)"
+              />
+              <StatCard label={`Avg ${period}d`} value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
+              <StatCard label={`Max ${period}d`} value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#00d4aa" />
+              <StatCard label={`Min ${period}d`} value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ff4d6d" />
+              <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
+            </div>
+            {/* Period + search — desktop only (on mobile shown above) */}
+            {!isMobile && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
+                    <button key={p.d} onClick={() => setPeriod(p.d)} style={{
+                      boxSizing: "border-box", flex: 1,
+                      background: period === p.d ? "#4a9eff22" : "transparent",
+                      border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
+                      borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
+                      fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 10px", cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}>{p.l}</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex" }}>
+                  <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+                    onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
+                    style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", outline: "none" }} />
+                  <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>GO</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1633,6 +1667,7 @@ function TrendTooltip({ active, payload, wins, activeWins, mode }) {
 }
 
 function TrendPage() {
+  const isMobile = useIsMobile();
   const [category, setCategory] = useState("Crypto");
   const [coin, setCoin]         = useState("BTC");
   const [inputCoin, setInputCoin] = useState("BTC");
@@ -1735,7 +1770,7 @@ function TrendPage() {
               borderRadius: 4, color: mode === m ? "#4a9eff" : "#bbb",
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: mode === m ? 600 : 400,
               padding: "6px 12px", cursor: "pointer", letterSpacing: "0.05em", whiteSpace: "nowrap",
-            }}>{lbl}</button>
+            }}>{isMobile ? (m === "daily" ? "DAILY" : "INTRADAY") : lbl}</button>
           ))}
         </div>
       </div>
@@ -1891,6 +1926,7 @@ function TrendPage() {
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const isMobile = useIsMobile();
   const [page, setPage] = useState("explorer");
   const [explorerCoin, setExplorerCoin] = useState("HYPE");
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1918,7 +1954,7 @@ export default function App() {
     setThemeMode(prev => prev === "auto" ? "dark" : prev === "dark" ? "light" : "auto");
   };
 
-  const SIDEBAR_W = sidebarOpen ? 200 : 52;
+  const SIDEBAR_W = isMobile ? 0 : (sidebarOpen ? 200 : 52);
 
   const NAV_ITEMS = [
     { id: "explorer", icon: "◈", label: "Explorer" },
@@ -1976,64 +2012,76 @@ export default function App() {
       <style>{`
         html, body { margin: 0; padding: 0; width: 100%; min-height: 100vh; background: var(--bg); }
         #root { width: 100%; min-height: 100vh; }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+        button { touch-action: manipulation; }
+        input { touch-action: manipulation; }
+        @media (max-width: 640px) {
+          ::-webkit-scrollbar { width: 3px; height: 3px; }
+          ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        }
       `}</style>
 
-      {/* Sidebar */}
-      <div style={{
-        width: SIDEBAR_W,
-        minWidth: SIDEBAR_W,
-        maxWidth: SIDEBAR_W,
-        background: "var(--bg-card)",
-        borderRight: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-        transition: "width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease",
-        overflow: "hidden",
-        position: "sticky",
-        top: 0,
-        height: "100vh",
-        zIndex: 100,
-      }}>
-        {/* Toggle button */}
-        <button style={toggleBtnStyle} onClick={() => setSidebarOpen(v => !v)}>
-          ☰
-        </button>
+      {/* Sidebar — desktop only */}
+      {!isMobile && (
+        <div style={{
+          width: SIDEBAR_W, minWidth: SIDEBAR_W, maxWidth: SIDEBAR_W,
+          background: "var(--bg-card)", borderRight: "1px solid var(--border)",
+          display: "flex", flexDirection: "column",
+          transition: "width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease",
+          overflow: "hidden", position: "sticky", top: 0, height: "100vh", zIndex: 100,
+        }}>
+          <button style={toggleBtnStyle} onClick={() => setSidebarOpen(v => !v)}>☰</button>
+          <nav style={{ flex: 1, display: "flex", flexDirection: "column", marginTop: 4 }}>
+            {NAV_ITEMS.map(({ id, icon, label }) => (
+              <button key={id} onClick={() => setPage(id)} style={navBtnStyle(id)}>
+                <span style={{ fontSize: 14, flexShrink: 0, width: sidebarOpen ? "auto" : "100%", textAlign: "center" }}>{icon}</span>
+                {sidebarOpen && <span>{label}</span>}
+              </button>
+            ))}
+          </nav>
+          {sidebarOpen && (
+            <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--border)" }}>
+              <button onClick={cycleTheme} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-muted)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", cursor: "pointer", textAlign: "left", letterSpacing: "0.05em" }}>
+                {themeMode === "auto" ? "◑ auto" : themeMode === "dark" ? "● dark" : "☀ light"}
+              </button>
+              <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.08em" }}>v1.0</div>
+              <div style={{ fontSize: 9, color: "var(--ghost)", letterSpacing: "0.05em" }}>built by psql</div>
+            </div>
+          )}
+        </div>
+      )}
 
-        {/* Nav items */}
-        <nav style={{ flex: 1, display: "flex", flexDirection: "column", marginTop: 4 }}>
+      {/* Bottom nav bar — mobile only */}
+      {isMobile && (
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, height: 56,
+          background: "var(--bg-card)", borderTop: "1px solid var(--border)",
+          display: "flex", alignItems: "stretch", zIndex: 200,
+        }}>
           {NAV_ITEMS.map(({ id, icon, label }) => (
-            <button key={id} onClick={() => setPage(id)} style={navBtnStyle(id)}>
-              <span style={{ fontSize: 14, flexShrink: 0, width: sidebarOpen ? "auto" : "100%", textAlign: "center" }}>{icon}</span>
-              {sidebarOpen && <span>{label}</span>}
+            <button key={id} onClick={() => setPage(id)} style={{
+              flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
+              background: page === id ? "#4a9eff18" : "transparent",
+              border: "none", borderTop: page === id ? "2px solid #4a9eff" : "2px solid transparent",
+              color: page === id ? "#4a9eff" : "var(--text-muted)",
+              fontFamily: "'IBM Plex Mono', monospace", cursor: "pointer", padding: "6px 0",
+            }}>
+              <span style={{ fontSize: 15 }}>{icon}</span>
+              <span style={{ fontSize: 7, letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</span>
             </button>
           ))}
-        </nav>
-
-        {/* Bottom section — only when expanded */}
-        {sidebarOpen && (
-          <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--border)" }}>
-            <button onClick={cycleTheme} style={{
-              background: "transparent",
-              border: `1px solid var(--border)`,
-              borderRadius: 4,
-              color: "var(--text-muted)",
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 11,
-              padding: "5px 8px",
-              cursor: "pointer",
-              textAlign: "left",
-              letterSpacing: "0.05em",
-            }}>
-              {themeMode === "auto" ? "◑ auto" : themeMode === "dark" ? "● dark" : "☀ light"}
-            </button>
-            <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.08em" }}>v1.0</div>
-            <div style={{ fontSize: 9, color: "var(--ghost)", letterSpacing: "0.05em" }}>built by psql</div>
-          </div>
-        )}
-      </div>
+          <button onClick={cycleTheme} style={{
+            width: 44, display: "flex", alignItems: "center", justifyContent: "center",
+            background: "transparent", border: "none", borderTop: "2px solid transparent",
+            color: "var(--text-muted)", cursor: "pointer", fontSize: 15, flexShrink: 0,
+          }}>
+            {themeMode === "auto" ? "◑" : themeMode === "dark" ? "●" : "☀"}
+          </button>
+        </div>
+      )}
 
       {/* Main content */}
-      <div style={{ flex: 1, overflow: "auto", padding: "clamp(14px,3vw,28px) clamp(16px,4vw,32px)" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "12px 14px" : "clamp(14px,3vw,28px) clamp(16px,4vw,32px)", paddingBottom: isMobile ? 68 : undefined }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
           {page === "explorer"
             ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} />
