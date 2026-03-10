@@ -80,11 +80,55 @@ const OKX_SYMBOL = { "kPEPE": "1000PEPE", "PEPE": "1000PEPE", "SHIB": "1000SHIB"
 function okxSym(c) { return (OKX_SYMBOL[c] ?? c) + "-USDT-SWAP"; }
 function dySym(c) { return c + "-USD"; }
 
+// ── Per-venue asset availability ─────────────────────────────────────────────
+// Crypto coins known to be listed on each non-HL venue (subset of MARKETS.Crypto)
+const CEX_CRYPTO = new Set([
+  "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","DYDX","WIF","LINK","SUI","APT","kPEPE","HYPE",
+]);
+const DYDX_CRYPTO = new Set([
+  "BTC","ETH","SOL","AVAX","ARB","OP","MATIC","BNB","WIF","LINK","SUI","APT","DYDX",
+]);
+const LIGHTER_CRYPTO = new Set(["BTC","ETH","SOL","ARB","OP","AVAX","BNB","LINK"]);
+
+function getVenueCoins(venue, category) {
+  if (venue === "hl") return MARKETS[category] ?? [];
+  if (category !== "Crypto") return [];
+  const crypto = MARKETS["Crypto"];
+  if (venue === "dy") return crypto.filter(c => DYDX_CRYPTO.has(c));
+  if (venue === "lt") return crypto.filter(c => LIGHTER_CRYPTO.has(c));
+  return crypto.filter(c => CEX_CRYPTO.has(c)); // bn, by, okx
+}
+
+// ── HL perp-dex discovery ─────────────────────────────────────────────────────
+let _hlDexCache = null;
+async function fetchHlDexes() {
+  if (_hlDexCache) return _hlDexCache;
+  try {
+    const res = await fetch("https://api.hyperliquid.xyz/info", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "perpDexs" }),
+    });
+    const data = await res.json();
+    // First element is null (main USDC dex), rest are named builder dexes
+    const dexes = [{ id: "", label: "USDC" }];
+    if (Array.isArray(data)) {
+      for (const d of data) {
+        if (!d?.name) continue;
+        const label = d.fullName && d.fullName.length <= 16 ? d.fullName : d.name.toUpperCase();
+        dexes.push({ id: d.name, label });
+      }
+    }
+    _hlDexCache = dexes;
+  } catch { _hlDexCache = [{ id: "", label: "USDC" }]; }
+  return _hlDexCache;
+}
+
 // ── API — Hyperliquid ─────────────────────────────────────────────────────────
 async function fetchAllFunding(coin, days, hlDexName = null) {
   const startTime = Date.now() - days * 24 * 3600 * 1000;
   const allData = [];
   let cursor = startTime;
+  // Named dex: prefix coin (e.g. "flx:ETH"); main dex: use apiCoin (handles xyz: for HIP-3)
   const coinParam = hlDexName ? `${hlDexName}:${coin}` : apiCoin(coin);
   for (let i = 0; i < 30; i++) {
     const res = await fetch("https://api.hyperliquid.xyz/info", {
@@ -113,6 +157,7 @@ async function fetchLiveFunding(coin, hlDexName = null) {
   const data = await res.json();
   const universe = data[0].universe;
   const ctxs = data[1];
+  // Named dexes prefix coins in universe (e.g. "flx:ETH"); xyz dex also prefixes
   const target = hlDexName ? `${hlDexName}:${coin}` : (isXyz(coin) ? `xyz:${coin}` : coin);
   const idx = universe.findIndex(a => a.name === target);
   return idx !== -1 ? ctxs[idx] : null;
@@ -519,7 +564,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   const [coin, setCoin] = useState(initialCoin);
   const [inputCoin, setInputCoin] = useState(initialCoin);
   const [venue, setVenue] = useState("hl");
-  const [hlDex, setHlDex] = useState(null);       // null = main HL perps; string = HIP-3 dex name
+  const [hlDex, setHlDex] = useState(null);       // null = main HL USDC; string = HIP-3 dex name
   const [perpDexs, setPerpDexs] = useState([]);   // list from perpDexs API
   const [dexCoins, setDexCoins] = useState([]);   // coins available on current hlDex
   const [period, setPeriod] = useState(7);
@@ -537,7 +582,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
   // Load available HIP-3 DEXs once on mount
   useEffect(() => { fetchPerpDexs().then(setPerpDexs); }, []);
 
-  // When hlDex changes, load its coins and select the first one
+  // When hlDex changes, load its coins and auto-select first one
   useEffect(() => {
     if (hlDex) {
       fetchDexCoins(hlDex).then(coins => {
@@ -615,13 +660,15 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
 
   const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); setTablePage(0); };
   const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) { setCoin(c); setTablePage(0); } };
-  const handleVenueChange = (v) => {
-    setVenue(v);
-    setHlDex(null);  // reset DEX sub-selector when switching venue
-    if (CRYPTO_ONLY_VENUES.has(v) && category !== "Crypto") {
-      setCategory("Crypto");
-      const firstCoin = VENUE_ASSETS[v][0];
-      setCoin(firstCoin); setInputCoin(firstCoin); setTablePage(0);
+  const handleVenueChange = (vid) => {
+    setVenue(vid);
+    setHlDex(null); // reset to main USDC dex on venue change
+    if (vid !== "hl") {
+      if (category !== "Crypto") setCategory("Crypto");
+      const available = getVenueCoins(vid, "Crypto");
+      if (available.length > 0 && !available.includes(coin)) {
+        setCoin(available[0]); setInputCoin(available[0]); setTablePage(0);
+      }
     }
   };
 
@@ -656,7 +703,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       </div>
 
       {/* Venue selector */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Venue</span>
         {VENUES.map(v2 => (
           <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
@@ -675,47 +722,47 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       {/* DEX sub-selector — only shown for Hyperliquid when HIP-3 DEXs are available */}
       {venue === "hl" && perpDexs.length > 0 && (
         <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>DEX</span>
+          <span style={{ fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Collateral</span>
           <button onClick={() => setHlDex(null)} style={{
             boxSizing: "border-box",
             background: hlDex === null ? "#4a9eff22" : "transparent",
             border: `1px solid ${hlDex === null ? "#4a9eff" : "#1e3a5f"}`,
             borderRadius: 4, color: hlDex === null ? "#4a9eff" : "#444",
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 9,
             fontWeight: hlDex === null ? 600 : 400,
-            padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
-          }}>HL (USDC)</button>
-          {perpDexs.map((dx, i) => {
-            const name = (typeof dx === "string" ? dx : dx?.name) ?? String(i);
+            padding: "4px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
+          }}>USDC</button>
+          {perpDexs.map((dx) => {
+            const name = (typeof dx === "string" ? dx : dx?.name);
             if (!name) return null;
-            const label = dx?.collateral ? `${name} (${dx.collateral})` : name;
+            const label = dx?.fullName && dx.fullName.length <= 16 ? dx.fullName : name.toUpperCase();
             return (
               <button key={name} onClick={() => setHlDex(name)} style={{
                 boxSizing: "border-box",
                 background: hlDex === name ? "#4a9eff22" : "transparent",
                 border: `1px solid ${hlDex === name ? "#4a9eff" : "#1e3a5f"}`,
                 borderRadius: 4, color: hlDex === name ? "#4a9eff" : "#444",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 9,
                 fontWeight: hlDex === name ? 600 : 400,
-                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+                padding: "4px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
               }}>{label}</button>
             );
           })}
         </div>
       )}
 
-      {/* Category tabs */}
+      {/* Category tabs — non-Crypto disabled for non-HL venues or named dex */}
       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
         {Object.keys(MARKETS).map(cat => {
-          const disabled = (CRYPTO_ONLY_VENUES.has(venue) || hlDex !== null) && cat !== "Crypto";
+          const enabled = venue === "hl" && hlDex === null || cat === "Crypto";
           return (
-            <button key={cat} onClick={() => { if (!disabled) { setCategory(cat); handleCoinSelect(MARKETS[cat][0]); } }} style={{
+            <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
               background: category === cat ? "#4a9eff" : "transparent",
-              border: `1px solid ${category === cat ? "#4a9eff" : "#1e3a5f"}`,
-              borderRadius: 4, color: category === cat ? "#05050d" : disabled ? "#2a2a3a" : "#555",
+              border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "#1e3a5f" : "#111827"}`,
+              borderRadius: 4, color: category === cat ? "#05050d" : enabled ? "#555" : "#222",
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
-              padding: "5px 10px", cursor: disabled ? "not-allowed" : "pointer",
-              letterSpacing: "0.05em", textTransform: "uppercase", opacity: disabled ? 0.35 : 1,
+              padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
+              letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
             }}>{cat}</button>
           );
         })}
@@ -724,7 +771,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       {/* Coin selector + search */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
         <CoinSelector
-          coins={hlDex ? dexCoins : (CRYPTO_ONLY_VENUES.has(venue) ? VENUE_ASSETS[venue] : MARKETS[category])}
+          coins={hlDex ? dexCoins : getVenueCoins(venue, category)}
           selected={coin}
           onSelect={handleCoinSelect}
         />
