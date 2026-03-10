@@ -614,7 +614,7 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
       setError(`${c} n'est pas disponible sur ${VENUES.find(x => x.id === v)?.label}`);
       return;
     }
-    setLoading(true); setLoadingMsg(days > 7 ? `Pagination (${days}j)...` : "Chargement...");
+    setLoading(true); setLoadingMsg(days > 7 ? `Pagination (${days}d)...` : "Loading...");
     setError(null); setData([]); setStats(null); setLive(null);
     try {
       let raw = [];
@@ -1717,52 +1717,141 @@ function TrendPage() {
 export default function App() {
   const [page, setPage] = useState("explorer");
   const [explorerCoin, setExplorerCoin] = useState("HYPE");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [themeMode, setThemeMode] = useState("auto");
 
   const navigateToExplorer = (coin) => { setExplorerCoin(coin); setPage("explorer"); };
 
+  // Apply data-theme attribute when themeMode changes
+  useEffect(() => {
+    if (themeMode === "auto") {
+      document.documentElement.removeAttribute("data-theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", themeMode);
+    }
+  }, [themeMode]);
+
+  const cycleTheme = () => {
+    setThemeMode(prev => prev === "auto" ? "dark" : prev === "dark" ? "light" : "auto");
+  };
+
+  const SIDEBAR_W = sidebarOpen ? 200 : 52;
+
+  const NAV_ITEMS = [
+    { id: "explorer", icon: "◈", label: "Explorer" },
+    { id: "trend",    icon: "⟲", label: "Trend" },
+    { id: "compare",  icon: "⊞", label: "Compare" },
+    { id: "arbi",     icon: "⇌", label: "Spread" },
+  ];
+
+  const navBtnStyle = (id) => ({
+    display: "flex",
+    alignItems: "center",
+    gap: sidebarOpen ? 10 : 0,
+    justifyContent: sidebarOpen ? "flex-start" : "center",
+    width: "100%",
+    padding: sidebarOpen ? "9px 14px" : "9px 0",
+    background: page === id ? "#4a9eff22" : "transparent",
+    border: "none",
+    borderLeft: page === id ? "2px solid #4a9eff" : "2px solid transparent",
+    borderRadius: 0,
+    color: page === id ? "#4a9eff" : "var(--text-muted)",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    fontWeight: page === id ? 600 : 400,
+    cursor: "pointer",
+    letterSpacing: "0.05em",
+    textTransform: "uppercase",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    boxSizing: "border-box",
+  });
+
+  const toggleBtnStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    padding: "10px 0",
+    background: "transparent",
+    border: "none",
+    borderLeft: "2px solid transparent",
+    color: "var(--text-muted)",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 16,
+    cursor: "pointer",
+    boxSizing: "border-box",
+  };
+
   return (
     <div style={{
-      minHeight: "100vh", background: "var(--bg)", color: "var(--text)",
+      display: "flex", minHeight: "100vh",
+      background: "var(--bg)", color: "var(--text)",
       fontFamily: "'IBM Plex Mono', monospace",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet" />
       <style>{`
-        html, body { margin: 0; padding: 0; width: 100%; min-height: 100vh; background: #05050d; }
+        html, body { margin: 0; padding: 0; width: 100%; min-height: 100vh; background: var(--bg); }
         #root { width: 100%; min-height: 100vh; }
       `}</style>
-      <div style={{
-        maxWidth: 1100,
-        width: "100%",
-        margin: "0 auto",
-        padding: "clamp(14px,3vw,28px) clamp(16px,4vw,32px)",
-        boxSizing: "border-box",
-        display: "flex", flexDirection: "column",
-        minHeight: "100vh",
-        overflow: "hidden",
-      }}>
-        {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "nowrap" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0, overflow: "hidden" }}>
-            <span style={{ fontSize: 10, letterSpacing: "0.2em", color: "#4a9eff", textTransform: "uppercase", flexShrink: 0 }}>Funding</span>
-            <span style={{ color: "var(--border)", flexShrink: 0 }}>|</span>
-            <span style={{ fontSize: 10, color: "var(--text-label)", letterSpacing: "0.08em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>RATE EXPLORER</span>
-          </div>
-          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            {[["explorer","Explorer"],["trend","Trend"],["compare","Comparer"],["arbi","Arbi"]].map(([id, label]) => (
-              <button key={id} onClick={() => setPage(id)} style={{
-                boxSizing: "border-box",
-                background: page === id ? "#4a9eff" : "transparent",
-                border: `1px solid ${page === id ? "#4a9eff" : "var(--border)"}`,
-                borderRadius: 4, color: page === id ? "var(--bg)" : "#555",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: page === id ? 700 : 400,
-                padding: "7px 18px", cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase",
-                whiteSpace: "nowrap",
-              }}>{label}</button>
-            ))}
-          </div>
-        </div>
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      {/* Sidebar */}
+      <div style={{
+        width: SIDEBAR_W,
+        minWidth: SIDEBAR_W,
+        maxWidth: SIDEBAR_W,
+        background: "var(--bg-card)",
+        borderRight: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        transition: "width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease",
+        overflow: "hidden",
+        position: "sticky",
+        top: 0,
+        height: "100vh",
+        zIndex: 100,
+      }}>
+        {/* Toggle button */}
+        <button style={toggleBtnStyle} onClick={() => setSidebarOpen(v => !v)}>
+          ☰
+        </button>
+
+        {/* Nav items */}
+        <nav style={{ flex: 1, display: "flex", flexDirection: "column", marginTop: 4 }}>
+          {NAV_ITEMS.map(({ id, icon, label }) => (
+            <button key={id} onClick={() => setPage(id)} style={navBtnStyle(id)}>
+              <span style={{ fontSize: 14, flexShrink: 0, width: sidebarOpen ? "auto" : "100%", textAlign: "center" }}>{icon}</span>
+              {sidebarOpen && <span>{label}</span>}
+            </button>
+          ))}
+        </nav>
+
+        {/* Bottom section — only when expanded */}
+        {sidebarOpen && (
+          <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--border)" }}>
+            <button onClick={cycleTheme} style={{
+              background: "transparent",
+              border: `1px solid var(--border)`,
+              borderRadius: 4,
+              color: "var(--text-muted)",
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 11,
+              padding: "5px 8px",
+              cursor: "pointer",
+              textAlign: "left",
+              letterSpacing: "0.05em",
+            }}>
+              {themeMode === "auto" ? "◑ auto" : themeMode === "dark" ? "● dark" : "☀ light"}
+            </button>
+            <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.08em" }}>v1.0</div>
+            <div style={{ fontSize: 9, color: "var(--ghost)", letterSpacing: "0.05em" }}>built by psql</div>
+          </div>
+        )}
+      </div>
+
+      {/* Main content */}
+      <div style={{ flex: 1, overflow: "auto", padding: "clamp(14px,3vw,28px) clamp(16px,4vw,32px)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
           {page === "explorer"
             ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} />
             : page === "trend"
@@ -1771,10 +1860,6 @@ export default function App() {
             ? <ComparePage onNavigate={navigateToExplorer} />
             : <ArbitragePage onNavigate={navigateToExplorer} />
           }
-        </div>
-
-        <div style={{ fontSize: 9, color: "var(--ghost)", textAlign: "right", letterSpacing: "0.08em", marginTop: 12 }}>
-          HYPERLIQUID · BINANCE · BYBIT · ASTERDEX · APR = RATE × FREQ × 365
         </div>
       </div>
     </div>
