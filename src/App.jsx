@@ -464,8 +464,8 @@ function CoinSelector({ coins, selected, onSelect }) {
           borderRadius: 4,
           color: selected === c ? "#4a9eff" : "#555",
           fontFamily: "'IBM Plex Mono', monospace",
-          fontSize: 11,
-          padding: "5px 8px",
+          fontSize: 10,
+          padding: "5px 10px",
           cursor: "pointer",
           lineHeight: 1,
         }}>{c}</button>
@@ -485,11 +485,11 @@ function CoinSelector({ coins, selected, onSelect }) {
               borderRadius: 4,
               color: restSelected ? "#4a9eff" : "#555",
               fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 11,
+              fontSize: 10,
               padding: "5px 7px 5px 9px",
               cursor: "pointer",
               lineHeight: 1,
-              minWidth: 80,
+              minWidth: 70,
             }}
           >
             <span style={{ flex: 1 }}>{restSelected ? selected : `+${rest.length}`}</span>
@@ -717,9 +717,9 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                 background: hlDex === null ? "#4a9eff22" : "transparent",
                 border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
                 borderRadius: 4, color: hlDex === null ? "#4a9eff" : "#444",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 9,
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
                 fontWeight: hlDex === null ? 600 : 400,
-                padding: "4px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
+                padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
               }}>USDC</button>
               {perpDexs.map((dx) => {
                 const name = (typeof dx === "string" ? dx : dx?.name);
@@ -731,9 +731,9 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                     background: hlDex === name ? "#4a9eff22" : "transparent",
                     border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
                     borderRadius: 4, color: hlDex === name ? "#4a9eff" : "#444",
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 9,
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
                     fontWeight: hlDex === name ? 600 : 400,
-                    padding: "4px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
+                    padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
                   }}>{label}</button>
                 );
               })}
@@ -770,43 +770,44 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats + controls row */}
       {stats && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 12, width: "100%" }}>
-          <StatCard
-            label="Current Funding" live={!!live}
-            value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#00d4aa" : "#ff4d6d" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
-            sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "Pending..."}
-            color="var(--text)"
-          />
-          <StatCard label="Avg Funding" value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
-          <StatCard label="Max" value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#00d4aa" />
-          <StatCard label="Min" value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ff4d6d" />
-          <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, width: "100%" }}>
+          <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
+            <StatCard
+              label="Realtime" live={!!live}
+              value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#00d4aa" : "#ff4d6d" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
+              sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "Pending..."}
+              color="var(--text)"
+            />
+            <StatCard label={`Avg ${period}d`} value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
+            <StatCard label={`Max ${period}d`} value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#00d4aa" />
+            <StatCard label={`Min ${period}d`} value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ff4d6d" />
+            <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
+          </div>
+          {/* Period + search */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: 4 }}>
+              {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
+                <button key={p.d} onClick={() => setPeriod(p.d)} style={{
+                  boxSizing: "border-box",
+                  background: period === p.d ? "#4a9eff22" : "transparent",
+                  border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
+                  borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 10px", cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}>{p.l}</button>
+              ))}
+            </div>
+            <div style={{ display: "flex" }}>
+              <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", width: 80, outline: "none" }} />
+              <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 8px", cursor: "pointer" }}>GO</button>
+            </div>
+          </div>
         </div>
       )}
-
-      {/* Period + search — above chart */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
-            <button key={p.d} onClick={() => setPeriod(p.d)} style={{
-              boxSizing: "border-box",
-              background: period === p.d ? "#4a9eff22" : "transparent",
-              border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
-              borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 12px", cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}>{p.l}</button>
-          ))}
-        </div>
-        <div style={{ display: "flex" }}>
-          <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
-            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 10px", width: 100, outline: "none" }} />
-          <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
-        </div>
-      </div>
 
       {/* Chart */}
       {(() => {
@@ -834,16 +835,16 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#0d1d35" vertical={false} />
-                  <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} scale="time" tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+                  <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
                   <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#333", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
                   <Tooltip content={<CustomTooltip />} />
                   <ReferenceLine y={0} stroke="#2a4a6f" strokeDasharray="3 3" />
-                  {dayBoundaries.map(t => (
-                    <ReferenceLine key={t} x={t} stroke="#4a9eff" strokeOpacity={0.2} strokeDasharray="2 6" />
-                  ))}
                   <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
                   <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
                   <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "var(--bg)", strokeWidth: 2 }} />
+                  {dayBoundaries.map(t => (
+                    <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6" ifOverflowVisible />
+                  ))}
                 </ComposedChart>
               </ResponsiveContainer>
             )}
