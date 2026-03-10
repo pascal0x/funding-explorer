@@ -48,7 +48,7 @@ const VENUE_ASSETS = {
 
 // Show first N coins as buttons, rest in dropdown
 const VISIBLE_COUNT = 6;
-const ALL_ASSETS = [...new Set([
+let ALL_ASSETS = [...new Set([
   ...MARKETS["Crypto"], ...MARKETS["Stocks"],
   ...MARKETS["Commodities"], ...MARKETS["FX / ETF"],
 ])];
@@ -81,7 +81,7 @@ function okxSym(c) { return (OKX_SYMBOL[c] ?? c) + "-USDT-SWAP"; }
 function dySym(c) { return c + "-USD"; }
 
 // ── Per-venue asset availability ─────────────────────────────────────────────
-// Crypto coins known to be listed on each non-HL venue (subset of MARKETS.Crypto)
+// Static fallback sets (used before dynamic fetch completes)
 const CEX_CRYPTO = new Set([
   "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","DYDX","WIF","LINK","SUI","APT","kPEPE","HYPE",
 ]);
@@ -90,9 +90,14 @@ const DYDX_CRYPTO = new Set([
 ]);
 const LIGHTER_CRYPTO = new Set(["BTC","ETH","SOL","ARB","OP","AVAX","BNB","LINK"]);
 
+// Dynamic per-venue crypto asset lists (populated async on app load)
+const _dynVenueAssets = {}; // { bn: [], by: [], okx: [], dy: [], lt: [], ad: [] }
+
 function getVenueCoins(venue, category) {
   if (venue === "hl") return MARKETS[category] ?? [];
   if (category !== "Crypto") return [];
+  if (_dynVenueAssets[venue]?.length) return _dynVenueAssets[venue];
+  // Fallback to static
   const crypto = MARKETS["Crypto"];
   if (venue === "dy") return crypto.filter(c => DYDX_CRYPTO.has(c));
   if (venue === "lt") return crypto.filter(c => LIGHTER_CRYPTO.has(c));
@@ -412,6 +417,151 @@ async function fetchLighterLiveFunding(coin) {
     const last = list[list.length - 1];
     return last ? { funding: String(last.rate ?? last.funding_rate ?? "0"), nextFundingTime: null } : null;
   } catch { return null; }
+}
+
+// ── Dynamic asset discovery ───────────────────────────────────────────────────
+let _assetsLoaded = false;
+
+// Normalize exchange base asset names to internal convention ("1000PEPE" → "kPEPE")
+function normalizeBase(base) {
+  if (!base) return "";
+  if (base.startsWith("1000")) return "k" + base.slice(4);
+  return base;
+}
+
+async function _fetchHlMainAssets() {
+  const res = await fetch("https://api.hyperliquid.xyz/info", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "meta" }),
+  });
+  const data = await res.json();
+  return (data.universe ?? []).map(u => u.name).filter(n => n && !n.includes(":"));
+}
+
+async function _fetchHlXyzAssets() {
+  const res = await fetch("https://api.hyperliquid.xyz/info", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "metaAndAssetCtxs", dex: "xyz" }),
+  });
+  const data = await res.json();
+  return (data[0]?.universe ?? []).map(u => {
+    const n = u.name ?? "";
+    return n.startsWith("xyz:") ? n.slice(4) : n;
+  }).filter(Boolean);
+}
+
+async function _fetchBinancePerpAssets() {
+  const res = await fetch("https://fapi.binance.com/fapi/v1/exchangeInfo");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.symbols ?? [])
+    .filter(s => s.contractType === "PERPETUAL" && s.quoteAsset === "USDT" && s.status === "TRADING")
+    .map(s => normalizeBase(s.baseAsset)).filter(Boolean);
+}
+
+async function _fetchBybitPerpAssets() {
+  const res = await fetch("https://api.bybit.com/v5/market/instruments-info?category=linear&settleCoin=USDT&limit=1000");
+  if (!res.ok) return [];
+  const data = await res.json();
+  if (data.retCode !== 0) return [];
+  return (data.result?.list ?? [])
+    .filter(s => s.status === "Trading")
+    .map(s => normalizeBase(s.baseCoin || s.symbol.replace(/USDT$/, ""))).filter(Boolean);
+}
+
+async function _fetchOkxPerpAssets() {
+  const res = await fetch("https://www.okx.com/api/v5/public/instruments?instType=SWAP");
+  if (!res.ok) return [];
+  const data = await res.json();
+  if (data.code !== "0") return [];
+  return (data.data ?? [])
+    .filter(s => s.settleCcy === "USDT" && s.state === "live")
+    .map(s => normalizeBase(s.baseCcy)).filter(Boolean);
+}
+
+async function _fetchDydxPerpAssets() {
+  const res = await fetch("https://indexer.dydx.trade/v4/perpetualMarkets");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Object.keys(data.markets ?? {}).map(sym => sym.replace(/-USD$/, "")).filter(Boolean);
+}
+
+async function _fetchLighterPerpAssets() {
+  await getLighterMarketId("BTC"); // fills _lighterMarkets cache
+  return Object.keys(_lighterMarkets ?? {});
+}
+
+async function _fetchAsterdexPerpAssets() {
+  const res = await fetch("https://fapi.asterdex.com/fapi/v1/exchangeInfo");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.symbols ?? [])
+    .filter(s => s.contractType === "PERPETUAL" && s.quoteAsset === "USDT" && s.status === "TRADING")
+    .map(s => normalizeBase(s.baseAsset)).filter(Boolean);
+}
+
+// Static sets for HL xyz categorization (used to sort dynamically discovered assets)
+const _XYZ_COMMODITY_SET = new Set(["GOLD","SILVER","NATGAS","BRENTOIL","COPPER","PLATINUM","PALLADIUM","URANIUM","ALUMINIUM","URNM"]);
+const _XYZ_FX_SET = new Set(["EUR","JPY","DXY","EWJ","EWY","USAR"]);
+
+async function fetchDynamicAssets() {
+  if (_assetsLoaded) return;
+  _assetsLoaded = true;
+
+  const results = await Promise.allSettled([
+    _fetchHlMainAssets(),
+    _fetchHlXyzAssets(),
+    _fetchBinancePerpAssets(),
+    _fetchBybitPerpAssets(),
+    _fetchOkxPerpAssets(),
+    _fetchDydxPerpAssets(),
+    _fetchLighterPerpAssets(),
+    _fetchAsterdexPerpAssets(),
+  ]);
+
+  const val = (r) => (r.status === "fulfilled" && r.value?.length ? r.value : null);
+  const [hlMain, hlXyz, bnCoins, byCoins, okxCoins, dyCoins, ltCoins, adCoins] = results.map(val);
+
+  // Update HL Crypto (main dex universe)
+  if (hlMain?.length) {
+    MARKETS["Crypto"] = hlMain;
+  }
+
+  // Update HL xyz: classify into Stocks / Commodities / FX+ETF
+  if (hlXyz?.length) {
+    const stocks = [], commodities = [], fx = [];
+    for (const name of hlXyz) {
+      XYZ.add(name); // ensure isXyz() returns true for new assets
+      if (_XYZ_COMMODITY_SET.has(name)) commodities.push(name);
+      else if (_XYZ_FX_SET.has(name)) fx.push(name);
+      else stocks.push(name); // unknown xyz → stocks by default
+    }
+    if (stocks.length)      MARKETS["Stocks"]      = stocks;
+    if (commodities.length) MARKETS["Commodities"] = commodities;
+    if (fx.length)          MARKETS["FX / ETF"]    = fx;
+  }
+
+  // Update per-venue dynamic lists
+  if (bnCoins)  _dynVenueAssets.bn  = bnCoins;
+  if (byCoins)  _dynVenueAssets.by  = byCoins;
+  if (okxCoins) _dynVenueAssets.okx = okxCoins;
+  if (dyCoins)  _dynVenueAssets.dy  = dyCoins;
+  if (ltCoins)  _dynVenueAssets.lt  = ltCoins;
+  if (adCoins)  _dynVenueAssets.ad  = adCoins;
+
+  // Recompute ALL_ASSETS
+  ALL_ASSETS = [...new Set([
+    ...MARKETS["Crypto"], ...MARKETS["Stocks"],
+    ...MARKETS["Commodities"], ...MARKETS["FX / ETF"],
+  ])];
+
+  // Recompute ARBI_ASSETS: HL crypto ∩ BN ∩ BY
+  if (_dynVenueAssets.bn?.length && _dynVenueAssets.by?.length) {
+    const bnSet = new Set(_dynVenueAssets.bn);
+    const bySet = new Set(_dynVenueAssets.by);
+    const arbi = MARKETS["Crypto"].filter(c => bnSet.has(c) && bySet.has(c));
+    if (arbi.length) ARBI_ASSETS = arbi;
+  }
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
@@ -902,7 +1052,8 @@ function ExplorerPage({ initialCoin = "HYPE" }) {
 }
 
 // ── ARBI (cross-exchange historical averages) ─────────────────────────────────
-const ARBI_ASSETS = [
+// Updated dynamically by fetchDynamicAssets() → HL crypto ∩ BN ∩ BY
+let ARBI_ASSETS = [
   "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF",
   "HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP",
 ];
@@ -1147,7 +1298,11 @@ function ComparePage({ onNavigate }) {
     loadedRef.current[vid] = true;
     abortRefs.current[vid] = false;
 
-    const assets = vid === "hl" ? ALL_ASSETS : ARBI_ASSETS;
+    // For non-HL venues: use dynamic list filtered to HL crypto (meaningful cross-venue comparison)
+    const hlCryptoSet = new Set(MARKETS["Crypto"]);
+    const assets = vid === "hl"
+      ? ALL_ASSETS
+      : (_dynVenueAssets[vid]?.filter(c => hlCryptoSet.has(c)) ?? ARBI_ASSETS);
     const freq = VENUE_FREQ[vid];
     const CONCURRENCY = 2;
 
@@ -1740,8 +1895,15 @@ export default function App() {
   const [explorerCoin, setExplorerCoin] = useState("HYPE");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [themeMode, setThemeMode] = useState("auto");
+  // Incremented after dynamic asset fetch to trigger re-render across all pages
+  const [, setAssetsVersion] = useState(0);
 
   const navigateToExplorer = (coin) => { setExplorerCoin(coin); setPage("explorer"); };
+
+  // Fetch dynamic asset lists on mount; bump version to re-render with updated lists
+  useEffect(() => {
+    fetchDynamicAssets().then(() => setAssetsVersion(v => v + 1));
+  }, []);
 
   // Apply data-theme attribute when themeMode changes
   useEffect(() => {
