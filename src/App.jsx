@@ -1242,25 +1242,43 @@ function ArbitragePage({ onNavigate }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
-            Spread<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
-          </h2>
-          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
-            Avg APR 7d / 30d / 90d — HL 1h×24×365 · Binance/Bybit 8h×3×365 · click column to sort
-          </div>
+      <div style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
+          Spread<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
+        </h2>
+        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
+          Avg APR 7d / 30d / 90d — HL 1h×24×365 · Binance/Bybit 8h×3×365 · click column to sort
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={runLoad} disabled={loading} style={{
-            background: loading ? "transparent" : "#4a9eff22", border: `1px solid ${loading ? "var(--border)" : "#4a9eff"}`,
-            borderRadius: 4, color: loading ? "var(--text-muted)" : "#4a9eff",
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
-            padding: "6px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
-          }}>⟳ REFRESH</button>
-          {loading && (
-            <button onClick={() => abortRef.current = true} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer" }}>■ STOP</button>
-          )}
+      </div>
+
+      {/* Controls encadré */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
+          {[
+            { id: "hl", label: "Hyperliquid", color: "#4a9eff" },
+            { id: "bn", label: "Binance",     color: "#f0b90b" },
+            { id: "by", label: "Bybit",       color: "#e6a817" },
+          ].map(v2 => (
+            <span key={v2.id} style={{
+              display: "inline-block",
+              background: `${v2.color}22`, border: `1px solid ${v2.color}`,
+              borderRadius: 4, color: v2.color,
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+              padding: "5px 12px", letterSpacing: "0.05em",
+            }}>{v2.label}</span>
+          ))}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button onClick={runLoad} disabled={loading} style={{
+              background: loading ? "transparent" : "#4a9eff22", border: `1px solid ${loading ? "var(--border)" : "#4a9eff"}`,
+              borderRadius: 4, color: loading ? "var(--text-muted)" : "#4a9eff",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+              padding: "5px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
+            }}>⟳ REFRESH</button>
+            {loading && (
+              <button onClick={() => abortRef.current = true} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 12px", cursor: "pointer" }}>■ STOP</button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1512,39 +1530,44 @@ function ComparePage({ onNavigate }) {
         </div>
       </div>
 
-      {/* Venue checkboxes */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Venues</span>
-        {VENUES.map(v2 => {
-          const checked = selectedVenues.has(v2.id);
-          const loading2 = loadingVenues.has(v2.id);
-          const prog = progressMap[v2.id];
-          return (
-            <label key={v2.id} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
-              <div
-                onClick={() => toggleVenue(v2.id)}
-                style={{
-                  width: 14, height: 14, borderRadius: 3,
-                  border: `1px solid ${checked ? v2.color : "var(--border)"}`,
-                  background: checked ? `${v2.color}33` : "transparent",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  cursor: "pointer", flexShrink: 0,
-                }}
-              >
-                {checked && <span style={{ color: v2.color, fontSize: 10, lineHeight: 1, fontWeight: 700 }}>✓</span>}
-              </div>
-              <span
-                onClick={() => toggleVenue(v2.id)}
-                style={{ fontSize: 11, color: checked ? v2.color : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace" }}
-              >
-                {v2.label}
-              </span>
-              {loading2 && prog && (
-                <span style={{ fontSize: 9, color: "var(--text-label)" }}>({prog.done}/{prog.total})</span>
-              )}
-            </label>
-          );
-        })}
+      {/* Controls encadré */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* Venue row */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
+          {VENUES.map(v2 => {
+            const active = selectedVenues.has(v2.id);
+            const loading2 = loadingVenues.has(v2.id);
+            const prog = progressMap[v2.id];
+            return (
+              <button key={v2.id} onClick={() => toggleVenue(v2.id)} style={{
+                boxSizing: "border-box",
+                background: active ? `${v2.color}22` : "transparent",
+                border: `1px solid ${active ? v2.color : "var(--border)"}`,
+                borderRadius: 4, color: active ? v2.color : "var(--text-dim)",
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 10, fontWeight: active ? 600 : 400,
+                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+              }}>
+                {v2.label}{loading2 && prog ? ` (${prog.done}/${prog.total})` : ""}
+              </button>
+            );
+          })}
+        </div>
+        {/* Market row */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
+          {CATS.map(cat => (
+            <button key={cat} onClick={() => setFilterCat(cat)} style={{
+              boxSizing: "border-box",
+              background: filterCat === cat ? "#4a9eff22" : "transparent",
+              border: `1px solid ${filterCat === cat ? "#4a9eff" : "var(--border)"}`,
+              borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "var(--text-dim)",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: filterCat === cat ? 600 : 400,
+              padding: "5px 10px", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.05em",
+            }}>{cat}</button>
+          ))}
+        </div>
       </div>
 
       {/* Progress bars */}
@@ -1563,19 +1586,6 @@ function ComparePage({ onNavigate }) {
           </div>
         );
       })}
-
-      {/* Category filter */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 12, flexWrap: "wrap" }}>
-        {CATS.map(cat => (
-          <button key={cat} onClick={() => setFilterCat(cat)} style={{
-            background: filterCat === cat ? "#4a9eff22" : "transparent",
-            border: `1px solid ${filterCat === cat ? "#4a9eff" : "var(--border)"}`,
-            borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "var(--text-dim)",
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-            padding: "5px 10px", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.05em",
-          }}>{cat}</button>
-        ))}
-      </div>
 
       {/* Table */}
       {sorted.length > 0 ? (
