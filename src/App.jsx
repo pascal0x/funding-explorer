@@ -1775,10 +1775,12 @@ function TrendPage() {
   const venueColor = VENUES.find(v2 => v2.id === venue)?.color ?? "#4a9eff";
 
   const trendDayBoundaries = [];
-  for (let i = 1; i < chartData.length; i++) {
-    const prev = new Date(chartData[i - 1].time).toDateString();
-    const curr = new Date(chartData[i].time).toDateString();
-    if (curr !== prev) trendDayBoundaries.push(chartData[i].time);
+  if (mode === "intraday") {
+    for (let i = 1; i < chartData.length; i++) {
+      const prev = new Date(chartData[i - 1].time).toDateString();
+      const curr = new Date(chartData[i].time).toDateString();
+      if (curr !== prev) trendDayBoundaries.push(chartData[i].time);
+    }
   }
 
   return (
@@ -1937,7 +1939,9 @@ function TrendPage() {
             <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 0, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
               <XAxis dataKey="time" type="number" domain={["dataMin","dataMax"]} scale="time"
-                tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+                tickFormatter={mode === "daily" ? fmtDateShort : undefined}
+                tick={mode === "daily" ? { fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" } : false}
+                tickLine={false} axisLine={{ stroke: "var(--border)" }} />
               <YAxis tickFormatter={v => v.toFixed(1) + "%"}
                 tick={{ fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
                 axisLine={false} tickLine={false} width={46} />
