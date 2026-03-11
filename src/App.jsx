@@ -1774,6 +1774,13 @@ function TrendPage() {
 
   const venueColor = VENUES.find(v2 => v2.id === venue)?.color ?? "#4a9eff";
 
+  const trendDayBoundaries = [];
+  for (let i = 1; i < chartData.length; i++) {
+    const prev = new Date(chartData[i - 1].time).toDateString();
+    const curr = new Date(chartData[i].time).toDateString();
+    if (curr !== prev) trendDayBoundaries.push(chartData[i].time);
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       {/* Header */}
@@ -1795,42 +1802,46 @@ function TrendPage() {
         </div>
       </div>
 
-      {/* Venue selector */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Venue</span>
-        {VENUES.map(v2 => (
-          <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
-            boxSizing: "border-box",
-            background: venue === v2.id ? `${v2.color}22` : "transparent",
-            border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
-            borderRadius: 4, color: venue === v2.id ? v2.color : "var(--text-dim)",
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
-            padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
-          }}>{v2.label}</button>
-        ))}
-      </div>
-
-      {/* Category + coin selector */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>Market</span>
-        {Object.keys(MARKETS).map(cat => {
-          const enabled = venue === "hl" || cat === "Crypto";
-          return (
-            <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
-              background: category === cat ? "#4a9eff" : "transparent",
-              border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
-              borderRadius: 4, color: category === cat ? "var(--bg)" : enabled ? "#bbb" : "#222",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
-              padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
-              letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
-            }}>{cat}</button>
-          );
-        })}
-      </div>
-      {/* Asset row — coin selector only, search moved to stats row */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Asset</span>
-        <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
+      {/* Selectors card — same layout as Explorer */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* Venue */}
+          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
+            {VENUES.map(v2 => (
+              <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
+                boxSizing: "border-box",
+                background: venue === v2.id ? `${v2.color}22` : "transparent",
+                border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
+                borderRadius: 4, color: venue === v2.id ? v2.color : "var(--text-dim)",
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
+                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+              }}>{v2.label}</button>
+            ))}
+          </div>
+          {/* Market */}
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
+            {Object.keys(MARKETS).map(cat => {
+              const enabled = venue === "hl" || cat === "Crypto";
+              return (
+                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
+                  background: category === cat ? "#4a9eff22" : "transparent",
+                  border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
+                  borderRadius: 4, color: category === cat ? "#4a9eff" : enabled ? "var(--text-dim)" : "var(--border)",
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
+                  padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
+                  letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
+                }}>{cat}</button>
+              );
+            })}
+          </div>
+          {/* Asset */}
+          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Asset</span>
+            <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
+          </div>
+        </div>
       </div>
 
       {/* Stats cards + window controls (mirrors Explorer layout) */}
@@ -1924,16 +1935,19 @@ function TrendPage() {
         {!loading && !error && chartData.length > 0 && (
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="2 6" stroke="#0d1a2e" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
               <XAxis dataKey="time" type="number" domain={["dataMin","dataMax"]} scale="time"
-                tickFormatter={fmtDateShort}
-                tick={{ fill: "var(--border)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
-                axisLine={false} tickLine={false} />
+                tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
               <YAxis tickFormatter={v => v.toFixed(1) + "%"}
-                tick={{ fill: "var(--border)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
+                tick={{ fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
                 axisLine={false} tickLine={false} width={46} />
-              <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="4 4" />
+              <ReferenceLine y={0} stroke="var(--text)" strokeWidth={0.8} />
               <Tooltip content={<TrendTooltip wins={wins} activeWins={activeWins} mode={mode} />} />
+              {trendDayBoundaries.map(t => (
+                <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6"
+                  label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "bottom", fill: "var(--text-muted)", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
+                />
+              ))}
               {/* Raw / daily avg as very faint area */}
               <Area dataKey="raw" stroke="#ffffff0a" fill="#ffffff06" dot={false} activeDot={false} isAnimationActive={false} />
               {/* MA lines */}
@@ -1953,7 +1967,7 @@ function TrendPage() {
 
       {/* Footer info */}
       {chartData.length > 0 && !loading && (
-        <div style={{ marginTop: 6, fontSize: 9, color: "#1e2a3a", textAlign: "right" }}>
+        <div style={{ marginTop: 6, fontSize: 9, color: "var(--text-muted)", textAlign: "right" }}>
           {mode === "daily"
             ? `${chartData.length} raw pts · windows in days × ${({ hl:24,dy:24,lt:24,bn:3,by:3,okx:3,ad:3 }[venue]??24)} periods/d`
             : `${chartData.length} raw pts · ${VENUES.find(v2 => v2.id === venue)?.label}`
