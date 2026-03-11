@@ -1061,37 +1061,41 @@ function ExplorerPage({ initialCoin = "BTC" }) {
         </div>
       )}
       {showTable && data.length > 0 && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 360 }}>
               <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <tr style={{ background: "#020617", borderBottom: "1px solid #1e293b" }}>
                   {["Date","Time","Rate","Premium","APR"].map(h => (
-                    <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 500 }}>{h}</th>
+                    <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "#94a3b8", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {pageData.map((row, i) => {
+                {pageData.map((row) => {
                   const p = row.rate >= 0; const d = new Date(row.time);
                   return (
-                    <tr key={row.time} style={{ borderBottom: "1px solid #0d1525", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                      <td style={{ padding: "6px 12px", color: "var(--text-muted)" }}>{d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
-                      <td style={{ padding: "6px 12px", color: "var(--text-dim)" }}>{d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</td>
-                      <td style={{ padding: "6px 12px", color: p ? "#00d4aa" : "#ff4d6d", fontWeight: 500 }}>{fmtRate(row.rawRate)}</td>
-                      <td style={{ padding: "6px 12px", color: "var(--text-dim)" }}>{(parseFloat(row.rawPremium) * 100).toFixed(4)}%</td>
-                      <td style={{ padding: "6px 12px", color: p ? "#00d4aa" : "#ff4d6d", fontWeight: 500 }}>{fmtAPR(row.apr)}</td>
+                    <tr key={row.time}
+                      style={{ borderBottom: "1px solid #1e293b", background: "#0f172a" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#111827"}
+                      onMouseLeave={e => e.currentTarget.style.background = "#0f172a"}
+                    >
+                      <td style={{ padding: "6px 12px", color: "#94a3b8" }}>{d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
+                      <td style={{ padding: "6px 12px", color: "#64748b" }}>{d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</td>
+                      <td style={{ padding: "6px 12px", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtRate(row.rawRate)}</td>
+                      <td style={{ padding: "6px 12px", color: "#94a3b8" }}>{(parseFloat(row.rawPremium) * 100).toFixed(4)}%</td>
+                      <td style={{ padding: "6px 12px", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtAPR(row.apr)}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-          <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border)", alignItems: "center" }}>
-            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage === 0 ? "#222" : "#bbb", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
-            <span style={{ fontSize: 10, color: "var(--text-label)" }}>{tablePage + 1} / {totalPages}</span>
-            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage >= totalPages - 1 ? "#222" : "#bbb", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
-            <span style={{ fontSize: 9, color: "var(--ghost)", marginLeft: "auto" }}>{tableData.length} entries</span>
+          <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #1e293b", alignItems: "center", background: "#0f172a" }}>
+            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid #1e293b", borderRadius: 4, color: tablePage === 0 ? "#1e293b" : "#94a3b8", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
+            <span style={{ fontSize: 10, color: "#64748b" }}>{tablePage + 1} / {totalPages}</span>
+            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid #1e293b", borderRadius: 4, color: tablePage >= totalPages - 1 ? "#1e293b" : "#94a3b8", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
+            <span style={{ fontSize: 9, color: "#334155", marginLeft: "auto" }}>{tableData.length} entries</span>
           </div>
         </div>
       )}
