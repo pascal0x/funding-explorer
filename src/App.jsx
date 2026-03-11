@@ -1219,7 +1219,7 @@ function ArbitragePage({ onNavigate }) {
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontSize: 20, fontWeight: 600, color: "var(--text)", margin: "0 0 3px 0" }}>
+          <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
             Spread<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
           </h2>
           <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
@@ -1229,7 +1229,7 @@ function ArbitragePage({ onNavigate }) {
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={runLoad} disabled={loading} style={{
             background: loading ? "transparent" : "#4a9eff22", border: `1px solid ${loading ? "var(--border)" : "#4a9eff"}`,
-            borderRadius: 4, color: loading ? "#333" : "#4a9eff",
+            borderRadius: 4, color: loading ? "var(--text-muted)" : "#4a9eff",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
             padding: "6px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
           }}>⟳ REFRESH</button>
@@ -1469,7 +1469,7 @@ function ComparePage({ onNavigate }) {
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontSize: 20, fontWeight: 600, color: "var(--text)", margin: "0 0 3px 0" }}>
+          <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
             Compare APR<span style={{ color: "#4a9eff" }}> · all markets</span>
           </h2>
           <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Avg APR 7d / 30d / 90d — click column to sort</div>
@@ -1477,7 +1477,7 @@ function ComparePage({ onNavigate }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button onClick={() => { VENUES.forEach(v2 => { if (selectedVenues.has(v2.id)) refreshVenue(v2.id); }); }} disabled={isLoading} style={{
             background: isLoading ? "transparent" : "#4a9eff22", border: `1px solid ${isLoading ? "var(--border)" : "#4a9eff"}`,
-            borderRadius: 4, color: isLoading ? "#333" : "#4a9eff",
+            borderRadius: 4, color: isLoading ? "var(--text-muted)" : "#4a9eff",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
             padding: "6px 14px", cursor: isLoading ? "default" : "pointer", letterSpacing: "0.08em",
           }}>⟳ REFRESH</button>
@@ -1510,7 +1510,7 @@ function ComparePage({ onNavigate }) {
               </div>
               <span
                 onClick={() => toggleVenue(v2.id)}
-                style={{ fontSize: 11, color: checked ? v2.color : "#bbb", fontFamily: "'IBM Plex Mono', monospace" }}
+                style={{ fontSize: 11, color: checked ? v2.color : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace" }}
               >
                 {v2.label}
               </span>
@@ -1545,7 +1545,7 @@ function ComparePage({ onNavigate }) {
           <button key={cat} onClick={() => setFilterCat(cat)} style={{
             background: filterCat === cat ? "#4a9eff22" : "transparent",
             border: `1px solid ${filterCat === cat ? "#4a9eff" : "var(--border)"}`,
-            borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "#bbb",
+            borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "var(--text-dim)",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
             padding: "5px 10px", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.05em",
           }}>{cat}</button>
@@ -1778,8 +1778,8 @@ function TrendPage() {
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       {/* Header */}
       <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 600, color: "var(--text)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
-          {coin}<span style={{ color: venueColor }}>-TREND</span>
+        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+          {coin}<span style={{ color: venueColor, fontWeight: 700 }}>-TREND</span>
         </span>
         <div style={{ display: "flex", gap: 4 }}>
           {[["daily","DAILY MA"],["intraday","INTRADAY MA"]].map(([m, lbl]) => (
@@ -1787,7 +1787,7 @@ function TrendPage() {
               boxSizing: "border-box",
               background: mode === m ? "#4a9eff22" : "transparent",
               border: `1px solid ${mode === m ? "#4a9eff" : "var(--border)"}`,
-              borderRadius: 4, color: mode === m ? "#4a9eff" : "#bbb",
+              borderRadius: 4, color: mode === m ? "#4a9eff" : "var(--text-dim)",
               fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: mode === m ? 600 : 400,
               padding: "6px 12px", cursor: "pointer", letterSpacing: "0.05em", whiteSpace: "nowrap",
             }}>{isMobile ? (m === "daily" ? "DAILY" : "INTRADAY") : lbl}</button>
@@ -1803,7 +1803,7 @@ function TrendPage() {
             boxSizing: "border-box",
             background: venue === v2.id ? `${v2.color}22` : "transparent",
             border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
-            borderRadius: 4, color: venue === v2.id ? v2.color : "#bbb",
+            borderRadius: 4, color: venue === v2.id ? v2.color : "var(--text-dim)",
             fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
             padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
           }}>{v2.label}</button>
@@ -1847,7 +1847,7 @@ function TrendPage() {
                     boxSizing: "border-box",
                     background: active ? `${color}22` : "transparent",
                     border: `1px solid ${active ? color : "var(--border)"}`,
-                    borderRadius: 4, color: active ? color : "#555",
+                    borderRadius: 4, color: active ? color : "var(--text-muted)",
                     fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
                     padding: "6px 10px", cursor: "pointer",
                   }}>{w.label}</button>
@@ -1889,7 +1889,7 @@ function TrendPage() {
                         boxSizing: "border-box",
                         background: active ? `${color}22` : "transparent",
                         border: `1px solid ${active ? color : "var(--border)"}`,
-                        borderRadius: 4, color: active ? color : "#555",
+                        borderRadius: 4, color: active ? color : "var(--text-muted)",
                         fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
                         padding: "5px 10px", cursor: "pointer",
                       }}>{w.label}</button>
@@ -1910,7 +1910,7 @@ function TrendPage() {
       )}
 
       {/* Chart */}
-      <div style={{ background: "var(--bg-alt)", border: "1px solid #0d1a2e", borderRadius: 8, padding: "12px 4px 4px 0", flex: 1, minHeight: 260 }}>
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 4px 10px", flex: 1, minHeight: 260 }}>
         {loading && (
           <div style={{ height: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff44", fontSize: 11, letterSpacing: "0.15em" }}>
             CALCUL DES MOYENNES…
@@ -2068,7 +2068,7 @@ export default function App() {
           background: "var(--bg-card)", borderRight: "1px solid var(--border)",
           display: "flex", flexDirection: "column",
           transition: "width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease",
-          overflow: "hidden", position: "sticky", top: 0, height: "100vh", zIndex: 100,
+          overflowX: "hidden", overflowY: "auto", position: "sticky", top: 0, height: "100vh", zIndex: 100,
         }}>
           <button style={toggleBtnStyle} onClick={() => setSidebarOpen(v => !v)}>☰</button>
           <nav style={{ flex: 1, display: "flex", flexDirection: "column", marginTop: 4 }}>
