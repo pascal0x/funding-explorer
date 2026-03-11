@@ -709,7 +709,7 @@ function CoinSelector({ coins, selected, onSelect }) {
                       width: "100%",
                       background: selected === c ? "#4a9eff18" : "transparent",
                       border: "none",
-                      borderBottom: "1px solid #0d1525",
+                      borderBottom: "1px solid var(--border)",
                       color: selected === c ? "#4a9eff" : "var(--text-dim)",
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontSize: 11,
@@ -1212,7 +1212,7 @@ function ArbitragePage({ onNavigate }) {
     color: sortCol === col ? "#4a9eff" : "#bbb",
     fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
     fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
-    borderLeft: first ? "1px solid #0d1525" : "none",
+    borderLeft: first ? "1px solid var(--border)" : "none",
   });
 
   return (
@@ -1255,13 +1255,13 @@ function ArbitragePage({ onNavigate }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 740 }}>
               <thead>
-                <tr style={{ borderBottom: "1px solid #0d1525" }}>
+                <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <th style={{ padding: "7px 12px" }} />
                   {groups.map((g, gi) => (
                     <th key={g.label} colSpan={3} style={{
                       padding: "6px 10px", textAlign: "center",
                       color: g.color, fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600,
-                      borderLeft: gi > 0 ? "1px solid #0d1525" : "none",
+                      borderLeft: gi > 0 ? "1px solid var(--border)" : "none",
                     }}>{g.label}</th>
                   ))}
                   <th style={{ padding: "7px 12px", width: 40 }} />
@@ -1280,7 +1280,7 @@ function ArbitragePage({ onNavigate }) {
               </thead>
               <tbody>
                 {sorted.map((row, i) => (
-                  <tr key={row.coin} style={{ borderBottom: "1px solid #0d1525", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                  <tr key={row.coin} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
                     <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{row.coin}</td>
                     {allCols.map(([col], ci) => {
                       const isFirstOfGroup = ci === 3 || ci === 6;
@@ -1289,7 +1289,7 @@ function ArbitragePage({ onNavigate }) {
                           padding: "7px 10px", textAlign: "right",
                           color: aprColor(row[col]),
                           fontWeight: sortCol === col ? 600 : 400,
-                          borderLeft: isFirstOfGroup ? "1px solid #0d1525" : "none",
+                          borderLeft: isFirstOfGroup ? "1px solid var(--border)" : "none",
                         }}>
                           {row[col] !== null ? fmtAPR(row[col]) : "—"}
                         </td>
@@ -1559,13 +1559,13 @@ function ComparePage({ onNavigate }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 380 }}>
               <thead>
                 {/* Venue group header row */}
-                <tr style={{ borderBottom: "1px solid #0d1525" }}>
+                <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <th colSpan={3} style={{ padding: "7px 12px" }} />
                   {venueGroups.map((g, gi) => (
                     <th key={g.id} colSpan={3} style={{
                       padding: "6px 10px", textAlign: "center",
                       color: g.color, fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600,
-                      borderLeft: gi > 0 ? "1px solid #0d1525" : "1px solid #0d1525",
+                      borderLeft: gi > 0 ? "1px solid var(--border)" : "1px solid var(--border)",
                     }}>{g.label}</th>
                   ))}
                   <th style={{ padding: "7px 12px", width: 40 }} />
@@ -1582,7 +1582,7 @@ function ComparePage({ onNavigate }) {
                         color: sortCol === col ? g.color : "#bbb",
                         fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
                         fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
-                        borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid #0d1525" : "none",
+                        borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid var(--border)" : "none",
                       }}>{label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
                     ))
                   )}
@@ -1591,7 +1591,7 @@ function ComparePage({ onNavigate }) {
               </thead>
               <tbody>
                 {sorted.map((row, i) => (
-                  <tr key={row.coin} style={{ borderBottom: "1px solid #0d1525", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                  <tr key={row.coin} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
                     <td style={{ padding: "7px 12px", color: "var(--ghost)", fontSize: 10 }}>{i + 1}</td>
                     <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{row.coin}</td>
                     <td style={{ padding: "7px 12px", color: "var(--text-dim)", fontSize: 10 }}>{row.cat}</td>
@@ -1601,7 +1601,7 @@ function ComparePage({ onNavigate }) {
                           padding: "7px 10px", textAlign: "right",
                           color: aprColorFn(row[col]),
                           fontWeight: sortCol === col ? 600 : 400,
-                          borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid #0d1525" : "none",
+                          borderLeft: (gi > 0 && ci === 0) || ci === 0 ? "1px solid var(--border)" : "none",
                         }}>
                           {row[col] !== null ? fmtAPR(row[col]) : "—"}
                         </td>
