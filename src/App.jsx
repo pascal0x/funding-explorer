@@ -1890,7 +1890,6 @@ function TrendPage() {
                 return (
                   <StatCard key={w.key} label={w.label}
                     value={<span style={{ color: val >= 0 ? "#00d4aa" : "#ff4d6d" }}>{fmtAPR(val)}</span>}
-                    sub={`rate: ${(val / VENUE_FREQ[venue]).toFixed(4)}%`}
                     color={color}
                   />
                 );
