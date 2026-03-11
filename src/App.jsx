@@ -14,6 +14,19 @@ function useIsMobile(bp = 640) {
   return m;
 }
 
+function usePersistedState(key, defaultValue) {
+  const [value, setValue] = useState(() => {
+    try {
+      const s = localStorage.getItem(key);
+      return s !== null ? JSON.parse(s) : defaultValue;
+    } catch { return defaultValue; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  }, [key, value]);
+  return [value, setValue];
+}
+
 // ── Markets (no JP225/KR200 — no data; use EWJ/EWY instead) ─────────────────
 const MARKETS = {
   "Crypto":      ["HYPE","BTC","ETH","SOL","AVAX","ARB","OP","MATIC","DYDX","BNB","WIF","LINK","SUI","APT","SPX","kPEPE"],
@@ -653,6 +666,7 @@ function CoinSelector({ coins, selected, onSelect }) {
             }}
           >
             <span style={{ flex: 1 }}>{restSelected ? selected : `+${rest.length}`}</span>
+            {restSelected && <span style={{ fontSize: 9, opacity: 0.6, marginRight: 2 }}>+{rest.length}</span>}
             <span style={{
               display: "inline-block",
               width: 0, height: 0,
@@ -718,13 +732,13 @@ function CoinSelector({ coins, selected, onSelect }) {
 }
 
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
-function ExplorerPage({ initialCoin = "HYPE" }) {
+function ExplorerPage({ initialCoin = "BTC" }) {
   const isMobile = useIsMobile();
   const initCat = () => { for (const [c, l] of Object.entries(MARKETS)) if (l.includes(initialCoin)) return c; return "Crypto"; };
-  const [category, setCategory] = useState(initCat);
+  const [category, setCategory] = usePersistedState("explorerCategory", initCat());
   const [coin, setCoin] = useState(initialCoin);
   const [inputCoin, setInputCoin] = useState(initialCoin);
-  const [venue, setVenue] = useState("hl");
+  const [venue, setVenue] = usePersistedState("explorerVenue", "hl");
   const [hlDex, setHlDex] = useState(null);       // null = main HL USDC; string = HIP-3 dex name
   const [perpDexs, setPerpDexs] = useState([]);   // list from perpDexs API
   const [dexCoins, setDexCoins] = useState([]);   // coins available on current hlDex
@@ -1668,11 +1682,13 @@ function TrendTooltip({ active, payload, wins, activeWins, mode }) {
 
 function TrendPage() {
   const isMobile = useIsMobile();
-  const [category, setCategory] = useState("Crypto");
-  const [coin, setCoin]         = useState("BTC");
-  const [inputCoin, setInputCoin] = useState("BTC");
-  const [venue, setVenue]       = useState("hl");
-  const [mode, setMode]         = useState("daily");    // "daily" | "intraday"
+  const [category, setCategory] = usePersistedState("trendCategory", "Crypto");
+  const [coin, setCoin]         = usePersistedState("trendCoin", "BTC");
+  const [inputCoin, setInputCoin] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("trendCoin") ?? '"BTC"'); } catch { return "BTC"; }
+  });
+  const [venue, setVenue]       = usePersistedState("trendVenue", "hl");
+  const [mode, setMode]         = usePersistedState("trendMode", "daily"); // "daily" | "intraday"
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
   const [chartData, setChartData] = useState([]);
@@ -1807,65 +1823,85 @@ function TrendPage() {
           );
         })}
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Asset</span>
-          <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
-        </div>
-        <div style={{ display: "flex", flexShrink: 0 }}>
-          <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-            onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
-            placeholder="Ticker..."
-            style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, padding: "6px 10px", width: 80, outline: "none" }} />
-          <button onClick={() => handleCoinSelect(inputCoin.trim().toUpperCase())} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
-        </div>
-      </div>
-
-      {/* MA window toggles */}
+      {/* Asset row — coin selector only, search moved to stats row */}
       <div style={{ display: "flex", gap: 4, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4 }}>
-          {mode === "daily" ? "Window (days)" : "Window (periods)"}
-        </span>
-        {wins.map((w, i) => {
-          const color = MA_COLORS[i % MA_COLORS.length];
-          const active = activeWins.has(w.key);
-          return (
-            <button key={w.key} onClick={() => toggleWin(w.key)} style={{
-              boxSizing: "border-box",
-              background: active ? `${color}22` : "transparent",
-              border: `1px solid ${active ? color : "var(--border)"}`,
-              borderRadius: 4, color: active ? color : "#333",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
-              padding: "4px 10px", cursor: "pointer", letterSpacing: "0.05em",
-            }}>{w.label}</button>
-          );
-        })}
+        <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Asset</span>
+        <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
       </div>
 
-      {/* Stats cards */}
+      {/* Stats cards + window controls (mirrors Explorer layout) */}
       {last && activeWinList.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 12 }}>
-          {activeWinList.map((w, i) => {
-            const color = MA_COLORS[i % MA_COLORS.length];
-            const val = last[w.key];
-            if (val == null) return null;
-            return (
-              <StatCard key={w.key} label={w.label}
-                value={<span style={{ color: val >= 0 ? "#00d4aa" : "#ff4d6d" }}>{fmtAPR(val)}</span>}
-                sub={`rate: ${(val / VENUE_FREQ[venue]).toFixed(4)}%`}
-                color={color}
-              />
-            );
-          })}
-          {signal && (
-            <StatCard label="Signal"
-              value={<span style={{ color: signal === "haussier" ? "#00d4aa" : signal === "baissier" ? "#ff4d6d" : "#bbb" }}>
-                {signal === "haussier" ? "↑ BULL" : signal === "baissier" ? "↓ BEAR" : "◆ FLAT"}
-              </span>}
-              sub={`${activeWinList[0]?.label} vs ${activeWinList[activeWinList.length - 1]?.label}`}
-              color="#bbb"
-            />
+        <div style={{ marginBottom: 12, width: "100%" }}>
+          {/* Mobile: window toggles + search in compact top row */}
+          {isMobile && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {wins.map((w, i) => {
+                const color = MA_COLORS[i % MA_COLORS.length];
+                const active = activeWins.has(w.key);
+                return (
+                  <button key={w.key} onClick={() => toggleWin(w.key)} style={{
+                    boxSizing: "border-box",
+                    background: active ? `${color}22` : "transparent",
+                    border: `1px solid ${active ? color : "var(--border)"}`,
+                    borderRadius: 4, color: active ? color : "#555",
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
+                    padding: "6px 10px", cursor: "pointer",
+                  }}>{w.label}</button>
+                );
+              })}
+              <div style={{ flex: 1 }} />
+              <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
+                placeholder="Ticker..."
+                style={{ width: 80, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "6px 8px", outline: "none" }} />
+              <button onClick={() => handleCoinSelect(inputCoin.trim().toUpperCase())} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
+            </div>
           )}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, width: "100%" }}>
+            {/* Left: MA stat cards */}
+            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fill, minmax(130px, 1fr))", gap: 8 }}>
+              {activeWinList.map((w, i) => {
+                const color = MA_COLORS[i % MA_COLORS.length];
+                const val = last[w.key];
+                if (val == null) return null;
+                return (
+                  <StatCard key={w.key} label={w.label}
+                    value={<span style={{ color: val >= 0 ? "#00d4aa" : "#ff4d6d" }}>{fmtAPR(val)}</span>}
+                    sub={`rate: ${(val / VENUE_FREQ[venue]).toFixed(4)}%`}
+                    color={color}
+                  />
+                );
+              })}
+            </div>
+            {/* Right: window toggles + search (desktop only) */}
+            {!isMobile && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {wins.map((w, i) => {
+                    const color = MA_COLORS[i % MA_COLORS.length];
+                    const active = activeWins.has(w.key);
+                    return (
+                      <button key={w.key} onClick={() => toggleWin(w.key)} style={{
+                        boxSizing: "border-box",
+                        background: active ? `${color}22` : "transparent",
+                        border: `1px solid ${active ? color : "var(--border)"}`,
+                        borderRadius: 4, color: active ? color : "#555",
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
+                        padding: "5px 10px", cursor: "pointer",
+                      }}>{w.label}</button>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex" }}>
+                  <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+                    onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
+                    placeholder="Ticker..."
+                    style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", outline: "none" }} />
+                  <button onClick={() => handleCoinSelect(inputCoin.trim().toUpperCase())} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 10px", cursor: "pointer" }}>GO</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1927,10 +1963,10 @@ function TrendPage() {
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const isMobile = useIsMobile();
-  const [page, setPage] = useState("explorer");
-  const [explorerCoin, setExplorerCoin] = useState("HYPE");
+  const [page, setPage] = usePersistedState("page", "explorer");
+  const [explorerCoin, setExplorerCoin] = usePersistedState("explorerCoin", "BTC");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [themeMode, setThemeMode] = useState("auto");
+  const [themeMode, setThemeMode] = usePersistedState("themeMode", "auto");
   // Incremented after dynamic asset fetch to trigger re-render across all pages
   const [, setAssetsVersion] = useState(0);
 
