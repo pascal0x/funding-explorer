@@ -119,7 +119,10 @@ const _dynVenueAssets = {}; // { bn: [], by: [], okx: [], dy: [], lt: [], ad: []
 function getVenueCoins(venue, category) {
   if (venue === "hl") return MARKETS[category] ?? [];
   if (category !== "Crypto") return [];
-  if (_dynVenueAssets[venue]?.length) return _dynVenueAssets[venue];
+  if (_dynVenueAssets[venue]?.length) {
+    const cryptoSet = new Set(MARKETS["Crypto"]);
+    return _dynVenueAssets[venue].filter(c => cryptoSet.has(c));
+  }
   // Fallback to static
   const crypto = MARKETS["Crypto"];
   if (venue === "dy") return crypto.filter(c => DYDX_CRYPTO.has(c));
