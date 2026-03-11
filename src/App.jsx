@@ -589,7 +589,7 @@ async function fetchDynamicAssets() {
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
 const StatCard = ({ label, value, sub, color, live }) => (
-  <div style={{ background: "var(--bg-card)", border: `1px solid ${live ? "#4a9eff44" : "var(--border)"}`, borderRadius: 8, padding: "11px 13px" }}>
+  <div style={{ background: "var(--bg-card)", border: `1px solid ${live ? "#4a9eff55" : "var(--border)"}`, borderRadius: 10, padding: "11px 13px" }}>
     <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
       {label}
       {live !== undefined && <span style={{ width: 5, height: 5, borderRadius: "50%", background: live ? "#00d4aa" : "var(--ghost)", display: "inline-block" }} />}
@@ -604,11 +604,11 @@ const CustomTooltip = ({ active, payload }) => {
   const d = payload[0].payload;
   const p = d.rate >= 0;
   return (
-    <div style={{ background: "var(--bg-alt)", border: `1px solid ${p ? "#00d4aa55" : "#ff4d6d55"}`, borderRadius: 8, padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
+    <div style={{ background: "#111827", border: `1px solid ${p ? "#16c78444" : "#ea394344"}`, borderRadius: 8, padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
       <div style={{ color: "#4a9eff", marginBottom: 5, fontSize: 10 }}>{fmtDateTime(d.time)}</div>
-      <div style={{ marginBottom: 2 }}>Rate <span style={{ color: p ? "#00d4aa" : "#ff4d6d", fontWeight: 600 }}>{fmtRate(d.rawRate)}</span></div>
-      <div style={{ color: "#666", marginBottom: 2 }}>Premium <span style={{ color: "#bbb" }}>{(parseFloat(d.rawPremium) * 100).toFixed(4)}%</span></div>
-      <div style={{ color: "#666" }}>APR <span style={{ color: p ? "#00d4aa" : "#ff4d6d", fontWeight: 600 }}>{fmtAPR(d.apr)}</span></div>
+      <div style={{ marginBottom: 2 }}>Rate <span style={{ color: p ? "#16c784" : "#ea3943", fontWeight: 600 }}>{fmtRate(d.rawRate)}</span></div>
+      <div style={{ color: "#64748b", marginBottom: 2 }}>Premium <span style={{ color: "#94a3b8" }}>{(parseFloat(d.rawPremium) * 100).toFixed(4)}%</span></div>
+      <div style={{ color: "#64748b" }}>APR <span style={{ color: p ? "#16c784" : "#ea3943", fontWeight: 600 }}>{fmtAPR(d.apr)}</span></div>
     </div>
   );
 };
@@ -856,15 +856,15 @@ function ExplorerPage({ initialCoin = "BTC" }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       {/* Title row */}
-      <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 600, color: "var(--text)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
           {coin}<span style={{ color: venueInfo?.color ?? "#4a9eff" }}>-PERP</span>
         </span>
         {venue === "hl" && (hlDex !== null || isXyz(coin)) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3{hlDex ? ` · ${hlDex}` : ""}</span>}
       </div>
 
       {/* Selectors */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {/* Venue selector */}
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
@@ -922,9 +922,9 @@ function ExplorerPage({ initialCoin = "BTC" }) {
               const enabled = venue === "hl" && hlDex === null || cat === "Crypto";
               return (
                 <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
-                  background: category === cat ? "#4a9eff" : "transparent",
+                  background: category === cat ? "#4a9eff22" : "transparent",
                   border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
-                  borderRadius: 4, color: category === cat ? "var(--bg)" : enabled ? "#bbb" : "#222",
+                  borderRadius: 4, color: category === cat ? "#4a9eff" : enabled ? "var(--text-dim)" : "var(--border)",
                   fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
                   padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
                   letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
@@ -971,13 +971,13 @@ function ExplorerPage({ initialCoin = "BTC" }) {
             <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
               <StatCard
                 label="Realtime" live={!!live}
-                value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#00d4aa" : "#ff4d6d" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
+                value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#16c784" : "#ea3943" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
                 sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "Pending..."}
                 color="var(--text)"
               />
-              <StatCard label={`Avg ${period}d`} value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#00d4aa" : "#ff4d6d"} />
-              <StatCard label={`Max ${period}d`} value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#00d4aa" />
-              <StatCard label={`Min ${period}d`} value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ff4d6d" />
+              <StatCard label={`Avg ${period}d`} value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#16c784" : "#ea3943"} />
+              <StatCard label={`Max ${period}d`} value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#16c784" />
+              <StatCard label={`Min ${period}d`} value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ea3943" />
               <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
             </div>
             {/* Period + search — desktop only (on mobile shown above) */}
@@ -1016,7 +1016,7 @@ function ExplorerPage({ initialCoin = "BTC" }) {
           if (currDay !== prevDay) dayBoundaries.push(data[i].time);
         }
         return (
-          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 4px 10px", height: 320, display: "flex", flexDirection: "column", marginBottom: 12, overflow: "hidden", minWidth: 0, width: "100%" }}>
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 4px 10px", height: 320, display: "flex", flexDirection: "column", marginBottom: 12, overflow: "hidden", minWidth: 0, width: "100%" }}>
             {loading && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>⟳ {loadingMsg}</div>}
             {error && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11, padding: "0 20px", textAlign: "center" }}>⚠ {error}</div>}
             {!loading && !error && data.length > 0 && (
@@ -1024,12 +1024,12 @@ function ExplorerPage({ initialCoin = "BTC" }) {
                 <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="posGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#00d4aa" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#00d4aa" stopOpacity={0.01} />
+                      <stop offset="5%" stopColor="#16c784" stopOpacity={0.22} />
+                      <stop offset="95%" stopColor="#16c784" stopOpacity={0.01} />
                     </linearGradient>
                     <linearGradient id="negGrad" x1="0" y1="1" x2="0" y2="0">
-                      <stop offset="5%" stopColor="#ff4d6d" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="#ff4d6d" stopOpacity={0.01} />
+                      <stop offset="5%" stopColor="#ea3943" stopOpacity={0.22} />
+                      <stop offset="95%" stopColor="#ea3943" stopOpacity={0.01} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#0d1d35" vertical={false} />
