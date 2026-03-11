@@ -1061,7 +1061,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
         </div>
       )}
       {showTable && data.length > 0 && (
-        <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 360 }}>
               <thead>
