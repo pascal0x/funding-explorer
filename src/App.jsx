@@ -70,7 +70,29 @@ const VENUE_ASSETS = {
 };
 
 // Show first N coins as buttons, rest in dropdown
-const VISIBLE_COUNT = 6;
+const VISIBLE_COUNT = 10;
+
+const TOP5_STATIC = ["BTC", "ETH", "SOL", "BNB", "LINK"];
+const VENUE_POPULAR = {
+  hl:  ["HYPE", "SUI", "AVAX", "WIF", "kPEPE"],
+  bn:  ["kPEPE", "WIF", "SUI", "AVAX", "ARB"],
+  by:  ["kPEPE", "WIF", "SUI", "AVAX", "ARB"],
+  okx: ["SUI", "AVAX", "APT", "ARB", "WIF"],
+  dy:  ["AVAX", "ARB", "OP", "DYDX", "SUI"],
+  lt:  ["SUI", "AVAX", "ARB", "APT", "OP"],
+  ad:  ["kPEPE", "WIF", "SUI", "AVAX", "ARB"],
+};
+
+function prioritizeCoins(venue, category, coins) {
+  if (category !== "Crypto") return coins;
+  const set = new Set(coins);
+  const top5 = TOP5_STATIC.filter(c => set.has(c));
+  const top5Set = new Set(top5);
+  const next5 = (VENUE_POPULAR[venue] ?? []).filter(c => set.has(c) && !top5Set.has(c));
+  const next5Set = new Set(next5);
+  const rest = coins.filter(c => !top5Set.has(c) && !next5Set.has(c));
+  return [...top5, ...next5, ...rest];
+}
 let ALL_ASSETS = [...new Set([
   ...MARKETS["Crypto"], ...MARKETS["Stocks"],
   ...MARKETS["Commodities"], ...MARKETS["FX / ETF"],
@@ -940,7 +962,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Asset</span>
             <CoinSelector
-              coins={hlDex ? dexCoins : getVenueCoins(venue, category)}
+              coins={hlDex ? dexCoins : prioritizeCoins(venue, category, getVenueCoins(venue, category))}
               selected={coin}
               onSelect={handleCoinSelect}
             />
@@ -1850,7 +1872,7 @@ function TrendPage() {
           {/* Asset */}
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Asset</span>
-            <CoinSelector coins={getVenueCoins(venue, category)} selected={coin} onSelect={handleCoinSelect} />
+            <CoinSelector coins={prioritizeCoins(venue, category, getVenueCoins(venue, category))} selected={coin} onSelect={handleCoinSelect} />
           </div>
         </div>
       </div>
