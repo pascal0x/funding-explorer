@@ -875,7 +875,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
                 background: venue === v2.id ? `${v2.color}22` : "transparent",
                 border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
                 borderRadius: 4,
-                color: venue === v2.id ? v2.color : "#bbb",
+                color: venue === v2.id ? v2.color : "var(--text-dim)",
                 fontFamily: "'IBM Plex Mono', monospace",
                 fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
                 padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
@@ -891,7 +891,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
                 boxSizing: "border-box",
                 background: hlDex === null ? "#4a9eff22" : "transparent",
                 border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
-                borderRadius: 4, color: hlDex === null ? "#4a9eff" : "#bbb",
+                borderRadius: 4, color: hlDex === null ? "#4a9eff" : "var(--text-dim)",
                 fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
                 fontWeight: hlDex === null ? 600 : 400,
                 padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
@@ -905,7 +905,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
                     boxSizing: "border-box",
                     background: hlDex === name ? "#4a9eff22" : "transparent",
                     border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
-                    borderRadius: 4, color: hlDex === name ? "#4a9eff" : "#bbb",
+                    borderRadius: 4, color: hlDex === name ? "#4a9eff" : "var(--text-dim)",
                     fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
                     fontWeight: hlDex === name ? 600 : 400,
                     padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
@@ -1021,7 +1021,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
             {error && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11, padding: "0 20px", textAlign: "center" }}>⚠ {error}</div>}
             {!loading && !error && data.length > 0 && (
               <ResponsiveContainer width="100%" height={260}>
-                <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
                   <defs>
                     <linearGradient id="posGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#16c784" stopOpacity={0.22} />
@@ -1034,15 +1034,15 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
                   <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-                  <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#bbb", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
+                  <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
                   <Tooltip content={<CustomTooltip />} />
-                  <ReferenceLine y={0} stroke="var(--text)" strokeWidth={1.5} />
+                  <ReferenceLine y={0} stroke="var(--text)" strokeWidth={0.8} />
                   <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
                   <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
                   <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "var(--bg)", strokeWidth: 2 }} />
                   {dayBoundaries.map(t => (
-                    <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6" ifOverflowVisible
-                      label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "insideBottomRight", fill: "#4a9effaa", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
+                    <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6"
+                      label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "bottom", fill: "var(--text-muted)", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
                     />
                   ))}
                 </ComposedChart>
