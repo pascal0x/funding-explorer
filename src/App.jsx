@@ -1162,8 +1162,10 @@ function ArbitragePage({ onNavigate }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [sortCol, setSortCol] = useState("hl30");
+  const [sortCol, setSortCol] = useState("hlbn");
   const [sortDir, setSortDir] = useState(-1);
+  const [leverage, setLeverage] = useState(1);
+  const [period, setPeriod] = useState("30");
   const abortRef = useRef(false);
   const hasLoaded = useRef(false);
 
@@ -1223,22 +1225,64 @@ function ArbitragePage({ onNavigate }) {
     else { setSortCol(col); setSortDir(-1); }
   };
 
-  const sorted = [...rows].sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
+  // Per-period derived rows with spread values
+  const withSpreads = rows.map(row => {
+    const hl = row[`hl${period}`] ?? null;
+    const bn = row[`bn${period}`] ?? null;
+    const by = row[`by${period}`] ?? null;
+    const hlbn = (hl !== null && bn !== null) ? Math.abs(hl - bn) : null;
+    const hlby = (hl !== null && by !== null) ? Math.abs(hl - by) : null;
+    const bnby = (bn !== null && by !== null) ? Math.abs(bn - by) : null;
+    return { ...row, hl, bn, by, hlbn, hlby, bnby };
+  });
 
-  const groups = [
-    { label: "Hyperliquid", color: "#4a9eff", cols: [["hl7","7d"],["hl30","30d"],["hl90","90d"]] },
-    { label: "Binance",     color: "#f0b90b", cols: [["bn7","7d"],["bn30","30d"],["bn90","90d"]] },
-    { label: "Bybit",       color: "#e6a817", cols: [["by7","7d"],["by30","30d"],["by90","90d"]] },
-  ];
-  const allCols = groups.flatMap(g => g.cols);
+  const sorted = [...withSpreads].sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
 
-  const thStyle = (col, first) => ({
+  // Returns { longId, shortId } for a pair — long = lower funding, short = higher funding
+  const strat = (aId, aVal, bId, bVal) => {
+    if (aVal === null || bVal === null) return null;
+    return aVal <= bVal
+      ? { longId: aId, shortId: bId }
+      : { longId: bId, shortId: aId };
+  };
+
+  const VL = {
+    hl: { label: "HL",  color: "#4a9eff" },
+    bn: { label: "BN",  color: "#f0b90b" },
+    by: { label: "BY",  color: "#e6a817" },
+  };
+
+  const spreadColor = (v) => {
+    if (v === null) return "var(--text-dim)";
+    if (v > 50) return "#00d4aa";
+    if (v > 20) return "#7fdfcc";
+    if (v > 5)  return "#aad4c8";
+    return "var(--text-muted)";
+  };
+
+  const btnStyle = (active, color = "#4a9eff") => ({
+    boxSizing: "border-box",
+    background: active ? `${color}22` : "transparent",
+    border: `1px solid ${active ? color : "var(--border)"}`,
+    borderRadius: 4, color: active ? color : "var(--text-dim)",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 10, fontWeight: active ? 600 : 400,
+    padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+  });
+
+  const thStyle = (col, hasBorderLeft) => ({
     padding: "6px 10px", textAlign: "right",
     color: sortCol === col ? "#4a9eff" : "#bbb",
     fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
     fontWeight: sortCol === col ? 700 : 400, cursor: "pointer", userSelect: "none",
-    borderLeft: first ? "1px solid var(--border)" : "none",
+    borderLeft: hasBorderLeft ? "1px solid var(--border)" : "none",
   });
+
+  const spreadPairs = [
+    { key: "hlbn", aId: "hl", bId: "bn" },
+    { key: "hlby", aId: "hl", bId: "by" },
+    { key: "bnby", aId: "bn", bId: "by" },
+  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
@@ -1247,12 +1291,13 @@ function ArbitragePage({ onNavigate }) {
           Spread<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
         </h2>
         <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
-          Avg APR 7d / 30d / 90d — HL 1h×24×365 · Binance/Bybit 8h×3×365 · click column to sort
+          Funding spread arb — short the highest, long the lowest · spread APR × leverage
         </div>
       </div>
 
       {/* Controls encadré */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* Venue badges + refresh */}
         <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
           {[
@@ -1269,16 +1314,30 @@ function ArbitragePage({ onNavigate }) {
             }}>{v2.label}</span>
           ))}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button onClick={runLoad} disabled={loading} style={{
-              background: loading ? "transparent" : "#4a9eff22", border: `1px solid ${loading ? "var(--border)" : "#4a9eff"}`,
-              borderRadius: 4, color: loading ? "var(--text-muted)" : "#4a9eff",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
-              padding: "5px 14px", cursor: loading ? "default" : "pointer", letterSpacing: "0.08em",
-            }}>⟳ REFRESH</button>
+            <button onClick={runLoad} disabled={loading} style={btnStyle(!loading)}>⟳ REFRESH</button>
             {loading && (
               <button onClick={() => abortRef.current = true} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 12px", cursor: "pointer" }}>■ STOP</button>
             )}
           </div>
+        </div>
+        {/* Period row */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Period</span>
+          {[["7","7d"],["30","30d"],["90","90d"]].map(([val, label]) => (
+            <button key={val} onClick={() => setPeriod(val)} style={btnStyle(period === val)}>{label}</button>
+          ))}
+        </div>
+        {/* Leverage row */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Leverage</span>
+          {[1,3,6].map(l => (
+            <button key={l} onClick={() => setLeverage(l)} style={btnStyle(leverage === l)}>{l}×</button>
+          ))}
+          {leverage > 1 && (
+            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>
+              spread APR = |rate_a − rate_b| × {leverage}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1296,58 +1355,90 @@ function ArbitragePage({ onNavigate }) {
       {sorted.length > 0 ? (
         <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", flex: "1 1 auto" }}>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 740 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 700 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <th style={{ padding: "7px 12px" }} />
-                  {groups.map((g, gi) => (
-                    <th key={g.label} colSpan={3} style={{
-                      padding: "6px 10px", textAlign: "center",
-                      color: g.color, fontSize: 9, letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 600,
-                      borderLeft: gi > 0 ? "1px solid var(--border)" : "none",
-                    }}>{g.label}</th>
-                  ))}
+                  <th colSpan={3} style={{ padding: "6px 10px", textAlign: "center", color: "var(--text-dim)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 500 }}>
+                    APR avg {period}d
+                  </th>
+                  <th colSpan={3} style={{ padding: "6px 10px", textAlign: "center", color: "#4a9eff", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, borderLeft: "1px solid var(--border)" }}>
+                    SPREAD {period}d{leverage > 1 ? ` · ${leverage}×` : ""}
+                  </th>
                   <th style={{ padding: "7px 12px", width: 40 }} />
                 </tr>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <th style={{ padding: "8px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
-                  {groups.map((g, gi) =>
-                    g.cols.map(([col, label], ci) => (
-                      <th key={col} onClick={() => handleSort(col)} style={thStyle(col, gi > 0 && ci === 0)}>
-                        {label}{sortCol === col ? (sortDir === -1 ? " ↓" : " ↑") : ""}
-                      </th>
-                    ))
-                  )}
+                  {/* APR cols */}
+                  {[["hl","HL"],["bn","BN"],["by","BY"]].map(([id, label]) => (
+                    <th key={id} onClick={() => handleSort(id)} style={thStyle(id, false)}>
+                      <span style={{ color: VL[id].color }}>{label}</span>{sortCol === id ? (sortDir === -1 ? " ↓" : " ↑") : ""}
+                    </th>
+                  ))}
+                  {/* Spread cols */}
+                  {spreadPairs.map(({ key, aId, bId }, si) => (
+                    <th key={key} onClick={() => handleSort(key)} style={thStyle(key, si === 0)}>
+                      <span style={{ color: VL[aId].color }}>{VL[aId].label}</span>
+                      <span style={{ color: "var(--text-muted)" }}>↔</span>
+                      <span style={{ color: VL[bId].color }}>{VL[bId].label}</span>
+                      {sortCol === key ? (sortDir === -1 ? " ↓" : " ↑") : ""}
+                    </th>
+                  ))}
                   <th style={{ padding: "8px 12px", width: 40 }} />
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((row, i) => (
-                  <tr key={row.coin} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                    <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{row.coin}</td>
-                    {allCols.map(([col], ci) => {
-                      const isFirstOfGroup = ci === 3 || ci === 6;
-                      return (
-                        <td key={col} style={{
-                          padding: "7px 10px", textAlign: "right",
-                          color: aprColor(row[col]),
-                          fontWeight: sortCol === col ? 600 : 400,
-                          borderLeft: isFirstOfGroup ? "1px solid var(--border)" : "none",
-                        }}>
-                          {row[col] !== null ? fmtAPR(row[col]) : "—"}
+                {sorted.map((row, i) => {
+                  const hlbnS = strat("hl", row.hl, "bn", row.bn);
+                  const hlbyS = strat("hl", row.hl, "by", row.by);
+                  const bnbyS = strat("bn", row.bn, "by", row.by);
+                  const stratMap = { hlbn: hlbnS, hlby: hlbyS, bnby: bnbyS };
+                  return (
+                    <tr key={row.coin} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                      <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{row.coin}</td>
+                      {/* APR cells */}
+                      {["hl","bn","by"].map(id => (
+                        <td key={id} style={{ padding: "7px 10px", textAlign: "right", color: aprColor(row[id]), fontWeight: sortCol === id ? 600 : 400 }}>
+                          {row[id] !== null ? fmtAPR(row[id]) : "—"}
                         </td>
-                      );
-                    })}
-                    <td style={{ padding: "7px 12px", textAlign: "center" }}>
-                      <button onClick={() => onNavigate(row.coin)} title="Explorer" style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
-                    </td>
-                  </tr>
-                ))}
+                      ))}
+                      {/* Spread cells */}
+                      {spreadPairs.map(({ key, aId, bId }, si) => {
+                        const spread = row[key];
+                        const s = stratMap[key];
+                        return (
+                          <td key={key} style={{ padding: "5px 10px", textAlign: "right", borderLeft: si === 0 ? "1px solid var(--border)" : "none", verticalAlign: "middle" }}>
+                            {spread !== null ? (
+                              <div>
+                                <div style={{ color: spreadColor(spread * leverage), fontWeight: sortCol === key ? 700 : 500 }}>
+                                  {fmtAPR(spread * leverage)}
+                                </div>
+                                {s && (
+                                  <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 3 }}>
+                                    <span style={{ fontSize: 8, background: "#00d4aa18", border: "1px solid #00d4aa33", borderRadius: 3, padding: "1px 5px", color: "#00d4aa", letterSpacing: "0.05em" }}>
+                                      L {VL[s.longId].label}
+                                    </span>
+                                    <span style={{ fontSize: 8, background: "#ff4d6d18", border: "1px solid #ff4d6d33", borderRadius: 3, padding: "1px 5px", color: "#ff4d6d", letterSpacing: "0.05em" }}>
+                                      S {VL[s.shortId].label}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                          </td>
+                        );
+                      })}
+                      <td style={{ padding: "7px 12px", textAlign: "center" }}>
+                        <button onClick={() => onNavigate(row.coin)} title="Explorer" style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
           <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 9, color: "var(--ghost)", display: "flex", justifyContent: "space-between" }}>
-            <span>{sorted.length} assets · HL vs Binance Futures vs Bybit Linear · — = unavailable</span>
+            <span>{sorted.length} assets · L = long (low funding) · S = short (high funding) · — = unavailable</span>
           </div>
         </div>
       ) : !loading && (
