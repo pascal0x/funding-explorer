@@ -1934,7 +1934,7 @@ function TrendPage() {
         )}
         {!loading && !error && chartData.length > 0 && (
           <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+            <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 0, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
               <XAxis dataKey="time" type="number" domain={["dataMin","dataMax"]} scale="time"
                 tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
