@@ -635,7 +635,7 @@ function CoinSelector({ coins, selected, onSelect }) {
           background: selected === c ? "#4a9eff22" : "transparent",
           border: `1px solid ${selected === c ? "#4a9eff" : "var(--border)"}`,
           borderRadius: 4,
-          color: selected === c ? "#4a9eff" : "#bbb",
+          color: selected === c ? "#4a9eff" : "var(--text-dim)",
           fontFamily: "'IBM Plex Mono', monospace",
           fontSize: 10,
           padding: "5px 10px",
@@ -656,7 +656,7 @@ function CoinSelector({ coins, selected, onSelect }) {
               background: restSelected ? "#4a9eff22" : "transparent",
               border: `1px solid ${restSelected ? "#4a9eff" : open ? "#4a9eff55" : "var(--border)"}`,
               borderRadius: 4,
-              color: restSelected ? "#4a9eff" : "#bbb",
+              color: restSelected ? "#4a9eff" : "var(--text-dim)",
               fontFamily: "'IBM Plex Mono', monospace",
               fontSize: 10,
               padding: "5px 7px 5px 9px",
@@ -672,7 +672,7 @@ function CoinSelector({ coins, selected, onSelect }) {
               width: 0, height: 0,
               borderLeft: "4px solid transparent",
               borderRight: "4px solid transparent",
-              borderTop: `5px solid ${restSelected ? "#4a9eff" : "#bbb"}`,
+              borderTop: `5px solid ${restSelected ? "#4a9eff" : "var(--text-dim)"}`,
               transition: "transform 0.15s",
               transform: open ? "rotate(180deg)" : "rotate(0deg)",
               flexShrink: 0,
@@ -710,7 +710,7 @@ function CoinSelector({ coins, selected, onSelect }) {
                       background: selected === c ? "#4a9eff18" : "transparent",
                       border: "none",
                       borderBottom: "1px solid #0d1525",
-                      color: selected === c ? "#4a9eff" : "#bbb",
+                      color: selected === c ? "#4a9eff" : "var(--text-dim)",
                       fontFamily: "'IBM Plex Mono', monospace",
                       fontSize: 11,
                       padding: "8px 14px",
@@ -719,7 +719,7 @@ function CoinSelector({ coins, selected, onSelect }) {
                       lineHeight: 1,
                     }}
                     onMouseEnter={e => { e.currentTarget.style.background = "#1e1e35"; e.currentTarget.style.color = "#ddd"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = selected === c ? "#4a9eff18" : "transparent"; e.currentTarget.style.color = selected === c ? "#4a9eff" : "#bbb"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = selected === c ? "#4a9eff18" : "transparent"; e.currentTarget.style.color = selected === c ? "#4a9eff" : "var(--text-dim)"; }}
                   >{c}</button>
                 ))}
               </div>
