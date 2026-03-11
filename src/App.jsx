@@ -732,7 +732,7 @@ function CoinSelector({ coins, selected, onSelect }) {
 }
 
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
-function ExplorerPage({ initialCoin = "BTC" }) {
+function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
   const isMobile = useIsMobile();
   const initCat = () => { for (const [c, l] of Object.entries(MARKETS)) if (l.includes(initialCoin)) return c; return "Crypto"; };
   const [category, setCategory] = usePersistedState("explorerCategory", initCat());
@@ -762,7 +762,7 @@ function ExplorerPage({ initialCoin = "BTC" }) {
     if (hlDex) {
       fetchDexCoins(hlDex).then(coins => {
         setDexCoins(coins);
-        if (coins.length > 0) { setCoin(coins[0]); setInputCoin(coins[0]); setTablePage(0); }
+        if (coins.length > 0) { setCoin(coins[0]); setInputCoin(coins[0]); setTablePage(0); if (onCoinChange) onCoinChange(coins[0]); }
       });
     } else {
       setDexCoins([]);
@@ -833,8 +833,8 @@ function ExplorerPage({ initialCoin = "BTC" }) {
     return () => clearInterval(liveRef.current);
   }, [coin, period, venue, hlDex, fetchData, loadLive]);
 
-  const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); setTablePage(0); };
-  const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) { setCoin(c); setTablePage(0); } };
+  const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); setTablePage(0); if (onCoinChange) onCoinChange(c); };
+  const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) { setCoin(c); setTablePage(0); if (onCoinChange) onCoinChange(c); } };
   const handleVenueChange = (vid) => {
     setVenue(vid);
     setHlDex(null); // reset to main USDC dex on venue change
@@ -842,7 +842,7 @@ function ExplorerPage({ initialCoin = "BTC" }) {
       if (category !== "Crypto") setCategory("Crypto");
       const available = getVenueCoins(vid, "Crypto");
       if (available.length > 0 && !available.includes(coin)) {
-        setCoin(available[0]); setInputCoin(available[0]); setTablePage(0);
+        setCoin(available[0]); setInputCoin(available[0]); setTablePage(0); if (onCoinChange) onCoinChange(available[0]);
       }
     }
   };
@@ -1032,11 +1032,11 @@ function ExplorerPage({ initialCoin = "BTC" }) {
                       <stop offset="95%" stopColor="#ea3943" stopOpacity={0.01} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#0d1d35" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
                   <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
                   <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "#bbb", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
                   <Tooltip content={<CustomTooltip />} />
-                  <ReferenceLine y={0} stroke="#2a4a6f" strokeDasharray="3 3" />
+                  <ReferenceLine y={0} stroke="var(--text)" strokeWidth={1.5} />
                   <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
                   <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
                   <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "var(--bg)", strokeWidth: 2 }} />
@@ -1065,9 +1065,9 @@ function ExplorerPage({ initialCoin = "BTC" }) {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 360 }}>
               <thead>
-                <tr style={{ background: "#020617", borderBottom: "1px solid #1e293b" }}>
+                <tr style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
                   {["Date","Time","Rate","Premium","APR"].map(h => (
-                    <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "#94a3b8", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{h}</th>
+                    <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "var(--text-label)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -1076,14 +1076,14 @@ function ExplorerPage({ initialCoin = "BTC" }) {
                   const p = row.rate >= 0; const d = new Date(row.time);
                   return (
                     <tr key={row.time}
-                      style={{ borderBottom: "1px solid #1e293b", background: "#0f172a" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#111827"}
-                      onMouseLeave={e => e.currentTarget.style.background = "#0f172a"}
+                      style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-card)" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--bg-alt)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "var(--bg-card)"}
                     >
-                      <td style={{ padding: "6px 12px", color: "#94a3b8" }}>{d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
-                      <td style={{ padding: "6px 12px", color: "#64748b" }}>{d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</td>
+                      <td style={{ padding: "6px 12px", color: "var(--text-dim)" }}>{d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
+                      <td style={{ padding: "6px 12px", color: "var(--text-muted)" }}>{d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</td>
                       <td style={{ padding: "6px 12px", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtRate(row.rawRate)}</td>
-                      <td style={{ padding: "6px 12px", color: "#94a3b8" }}>{(parseFloat(row.rawPremium) * 100).toFixed(4)}%</td>
+                      <td style={{ padding: "6px 12px", color: "var(--text-muted)" }}>{(parseFloat(row.rawPremium) * 100).toFixed(4)}%</td>
                       <td style={{ padding: "6px 12px", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtAPR(row.apr)}</td>
                     </tr>
                   );
@@ -1091,11 +1091,11 @@ function ExplorerPage({ initialCoin = "BTC" }) {
               </tbody>
             </table>
           </div>
-          <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid #1e293b", alignItems: "center", background: "#0f172a" }}>
-            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid #1e293b", borderRadius: 4, color: tablePage === 0 ? "#1e293b" : "#94a3b8", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
-            <span style={{ fontSize: 10, color: "#64748b" }}>{tablePage + 1} / {totalPages}</span>
-            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid #1e293b", borderRadius: 4, color: tablePage >= totalPages - 1 ? "#1e293b" : "#94a3b8", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
-            <span style={{ fontSize: 9, color: "#334155", marginLeft: "auto" }}>{tableData.length} entries</span>
+          <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border)", alignItems: "center", background: "var(--bg-card)" }}>
+            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage === 0 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{tablePage + 1} / {totalPages}</span>
+            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage >= totalPages - 1 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
+            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: "auto" }}>{tableData.length} entries</span>
           </div>
         </div>
       )}
@@ -2124,7 +2124,7 @@ export default function App() {
       <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "12px 14px" : "clamp(14px,3vw,28px) clamp(16px,4vw,32px)", paddingBottom: isMobile ? 68 : undefined }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
           {page === "explorer"
-            ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} />
+            ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} onCoinChange={setExplorerCoin} />
             : page === "trend"
             ? <TrendPage />
             : page === "compare"
