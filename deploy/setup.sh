@@ -26,8 +26,10 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
 echo "=== 5. Install systemd service ==="
-# Allow www-data to read /home/user
-chmod o+x /home/user
+# Ensure PostgreSQL is running
+pg_ctlcluster 16 main start 2>/dev/null || true
+systemctl enable postgresql 2>/dev/null || true
+
 cp "$REPO_DIR/deploy/funding-server.service" /etc/systemd/system/funding-server.service
 systemctl daemon-reload
 systemctl enable funding-server
