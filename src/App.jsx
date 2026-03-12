@@ -56,7 +56,7 @@ const VENUES = [
 // APR freq: HL/dYdX/Lighter 1h × 24 × 365, BN/BY/OKX/AD 8h × 3 × 365
 const VENUE_FREQ = { hl: 24 * 365, bn: 3 * 365, by: 3 * 365, okx: 3 * 365, dy: 24 * 365, lt: 24 * 365, ad: 3 * 365 };
 // Venues that only support crypto (not XYZ stocks/FX/commodities)
-const CRYPTO_ONLY_VENUES = new Set(["bn", "by", "okx", "dy", "lt", "ad"]);
+const CRYPTO_ONLY_VENUES = new Set(["bn", "by", "okx", "dy", "lt"]);
 
 // Per-venue crypto asset lists (CEX / dYdX / Lighter have limited markets)
 const VENUE_ASSETS = {
@@ -140,6 +140,23 @@ const _dynVenueAssets = {}; // { bn: [], by: [], okx: [], dy: [], lt: [], ad: []
 
 function getVenueCoins(venue, category) {
   if (venue === "hl") return MARKETS[category] ?? [];
+  // Asterdex: may have stocks/commodities/FX — filter dynamic list against category
+  if (venue === "ad") {
+    if (_dynVenueAssets.ad?.length) {
+      const catSet = new Set(MARKETS[category] ?? []);
+      // For Crypto, also include any ad coin not in other categories
+      if (category === "Crypto") {
+        const nonCrypto = new Set([
+          ...MARKETS["Stocks"], ...MARKETS["Commodities"], ...(MARKETS["FX / ETF"] ?? [])
+        ]);
+        return _dynVenueAssets.ad.filter(c => !nonCrypto.has(c) || catSet.has(c));
+      }
+      return _dynVenueAssets.ad.filter(c => catSet.has(c));
+    }
+    // Fallback: crypto only
+    if (category !== "Crypto") return [];
+    return MARKETS["Crypto"].filter(c => CEX_CRYPTO.has(c));
+  }
   if (category !== "Crypto") return [];
   if (_dynVenueAssets[venue]?.length) {
     const cryptoSet = new Set(MARKETS["Crypto"]);
@@ -568,12 +585,12 @@ async function _fetchLighterPerpAssets() {
 }
 
 async function _fetchAsterdexPerpAssets() {
-  const res = await fetch("https://fapi.asterdex.com/fapi/v1/exchangeInfo");
-  if (!res.ok) return [];
-  const data = await res.json();
-  return (data.symbols ?? [])
-    .filter(s => s.contractType === "PERPETUAL" && s.quoteAsset === "USDT" && s.status === "TRADING")
-    .map(s => normalizeBase(s.baseAsset)).filter(Boolean);
+  try {
+    const res = await fetch("/api/markets/ad");
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data.map(normalizeBase).filter(Boolean) : [];
+  } catch { return []; }
 }
 
 // Static sets for HL xyz categorization (used to sort dynamically discovered assets)
@@ -1537,7 +1554,8 @@ function BorosPage() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetchBorosMarkets()
+    fetch("/api/boros")
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`API ${r.status}`)))
       .then(data => { setMarkets(data); setLoading(false); })
       .catch(e  => { setError(e.message); setLoading(false); });
   }, []);

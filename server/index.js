@@ -65,6 +65,86 @@ app.get("/api/live", async (req, res) => {
   }
 });
 
+// ── GET /api/markets/:venue ───────────────────────────────────────────────────
+// Returns all available markets for a venue (dynamic discovery)
+app.get("/api/markets/:venue", async (req, res) => {
+  const { venue } = req.params;
+  try {
+    if (venue === "ad") {
+      const r = await fetch("https://fapi.asterdex.com/fapi/v1/exchangeInfo");
+      if (!r.ok) return res.status(502).json({ error: "Asterdex unreachable" });
+      const json = await r.json();
+      const symbols = (json.symbols ?? [])
+        .filter(s => s.status === "TRADING" && s.contractType === "PERPETUAL")
+        .map(s => s.baseAsset ?? s.symbol?.replace(/USDT$/, ""))
+        .filter(Boolean);
+      return res.json([...new Set(symbols)]);
+    }
+    if (venue === "lt") {
+      const r = await fetch("https://mainnet.zklighter.elliot.ai/api/v1/orderbooks");
+      if (!r.ok) return res.status(502).json({ error: "Lighter unreachable" });
+      const json = await r.json();
+      const symbols = (json.order_books ?? []).map(m => {
+        const raw = m.base_token?.symbol ?? m.base_asset ?? "";
+        return raw.toUpperCase().replace(/(-USDT?|-USD)$/, "");
+      }).filter(Boolean);
+      return res.json([...new Set(symbols)]);
+    }
+    res.status(400).json({ error: "unsupported venue for market discovery" });
+  } catch (e) {
+    console.error(`[api/markets/${venue}]`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/boros ────────────────────────────────────────────────────────────
+const BOROS_BASE_SRV = "https://api.boros.finance/core";
+let _borosCache = null;
+let _borosCacheTime = 0;
+
+app.get("/api/boros", async (req, res) => {
+  try {
+    // Cache 5 minutes
+    if (_borosCache && Date.now() - _borosCacheTime < 5 * 60 * 1000) {
+      return res.json(_borosCache);
+    }
+    const listRes = await fetch(`${BOROS_BASE_SRV}/v1/markets?limit=100&isWhitelisted=true`);
+    if (!listRes.ok) return res.status(502).json({ error: `Boros API ${listRes.status}` });
+    const listJson = await listRes.json();
+    const list = listJson.results ?? (Array.isArray(listJson) ? listJson : []);
+
+    const now = Date.now() / 1000;
+    const active = list.filter(m => !m.imData?.maturity || m.imData.maturity > now);
+
+    const details = await Promise.all(active.map(m =>
+      fetch(`${BOROS_BASE_SRV}/v1/markets/${m.marketId}`)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+    ));
+
+    const markets = details.filter(Boolean).map(m => {
+      const raw = m.metadata?.name ?? "";
+      const coin = raw.replace(/USDT$/, "").replace(/USD$/, "").replace(/USDC$/, "");
+      return {
+        name:          m.imData?.name ?? raw,
+        coin,
+        platform:      m.metadata?.platformName ?? "",
+        maturity:      m.imData?.maturity ?? 0,
+        impliedApr:    m.data?.impliedApr    ?? m.data?.markApr     ?? null,
+        underlyingApr: m.data?.underlyingApr ?? m.data?.floatingApr ?? null,
+        status:        m.data?.state ?? m.data?.marketStatus       ?? "—",
+      };
+    }).sort((a, b) => a.maturity - b.maturity);
+
+    _borosCache = markets;
+    _borosCacheTime = Date.now();
+    res.json(markets);
+  } catch (e) {
+    console.error("[api/boros]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GET /api/status ───────────────────────────────────────────────────────────
 app.get("/api/status", async (req, res) => {
   const { default: pool } = await import("./db.js");
