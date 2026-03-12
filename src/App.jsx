@@ -1162,8 +1162,6 @@ function ArbitragePage({ onNavigate }) {
   const [sortDir, setSortDir] = useState(-1);
   const [leverage, setLeverage] = useState(1);
   const [period, setPeriod] = useState("30");
-  const [borosMarkets, setBorosMarkets] = useState([]);
-  const [borosError, setBorosError] = useState(null);
   const abortRefs = useRef({});
   const loadedRef = useRef({});
 
@@ -1210,9 +1208,6 @@ function ArbitragePage({ onNavigate }) {
 
   useEffect(() => {
     ["hl", "bn", "by"].forEach(vid => loadVenue(vid));
-    fetchBorosMarkets()
-      .then(setBorosMarkets)
-      .catch(e => setBorosError(e.message));
   }, [loadVenue]);
 
   const toggleVenue = (vid) => {
@@ -1346,57 +1341,10 @@ function ArbitragePage({ onNavigate }) {
             <button key={l} onClick={() => setLeverage(l)} style={btnStyle(leverage === l)}>{l}×</button>
           ))}
           {leverage > 1 && (
-            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>spread APR = |rate_a − rate_b| × {leverage}</span>
+            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>spread APR = |rate_a − rate_b| × {leverage} / 2</span>
           )}
         </div>
       </div>
-
-      {/* Boros implied rates card */}
-      {(borosMarkets.length > 0 || borosError) && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 9, color: "#a855f7", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>Boros</span>
-            <span style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.06em" }}>· Pendle implied funding rates</span>
-          </div>
-          {borosError ? (
-            <div style={{ fontSize: 10, color: "#ff4d6d", letterSpacing: "0.05em" }}>Failed to load boros data — {borosError}</div>
-          ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {borosMarkets.map((m, i) => {
-                const markPct  = m.markApr  !== null ? (m.markApr  * 100).toFixed(2) : null;
-                const floatPct = m.floatingApr !== null ? (m.floatingApr * 100).toFixed(2) : null;
-                const matDate  = new Date(m.maturity * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
-                const markColor = m.markApr > 0 ? "#00d4aa" : m.markApr < 0 ? "#ff4d6d" : "var(--text-dim)";
-                return (
-                  <div key={i} style={{ background: "var(--bg-alt)", border: "1px solid var(--border)", borderRadius: 7, padding: "7px 12px", minWidth: 130 }}>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{m.coin}</span>
-                      <span style={{ fontSize: 8, color: "var(--text-muted)", letterSpacing: "0.05em" }}>{m.platform}</span>
-                    </div>
-                    <div style={{ fontSize: 8, color: "var(--text-label)", marginBottom: 5, letterSpacing: "0.05em" }}>exp {matDate}</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                        <span style={{ fontSize: 8, color: "var(--text-muted)", letterSpacing: "0.06em" }}>IMPLIED</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: markColor, fontFamily: "'IBM Plex Mono', monospace" }}>
-                          {markPct !== null ? `${markPct}%` : "—"}
-                        </span>
-                      </div>
-                      {floatPct !== null && (
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                          <span style={{ fontSize: 8, color: "var(--text-muted)", letterSpacing: "0.06em" }}>FLOAT</span>
-                          <span style={{ fontSize: 10, color: parseFloat(floatPct) >= 0 ? "#7fdfcc" : "#ff8fa0", fontFamily: "'IBM Plex Mono', monospace" }}>
-                            {parseFloat(floatPct) >= 0 ? "+" : ""}{floatPct}%
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Progress bars for loading venues */}
       {[...loadingVenues].map(vid => {
@@ -1468,8 +1416,8 @@ function ArbitragePage({ onNavigate }) {
                         <td key={key} style={{ padding: "5px 10px", textAlign: "right", borderLeft: si === 0 ? "1px solid var(--border)" : "none", verticalAlign: "middle" }}>
                           {spread !== null ? (
                             <div>
-                              <div style={{ color: spreadColor(spread * leverage), fontWeight: sortCol === key ? 700 : 500 }}>
-                                {fmtAPR(spread * leverage)}
+                              <div style={{ color: spreadColor(spread * leverage / 2), fontWeight: sortCol === key ? 700 : 500 }}>
+                                {fmtAPR(spread * leverage / 2)}
                               </div>
                               {s && (
                                 <div style={{ display: "flex", gap: 3, justifyContent: "flex-end", marginTop: 3 }}>
@@ -1562,82 +1510,6 @@ async function fetchBorosMarkets() {
 }
 
 function BorosPage() {
-  const [markets, setMarkets] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [sortCol, setSortCol] = useState("impliedApr");
-  const [sortDir, setSortDir] = useState(-1);
-  const hasLoaded = useRef(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchBorosMarkets();
-      setMarkets(data);
-    } catch (e) {
-      setError(e.message);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (!hasLoaded.current) { hasLoaded.current = true; load(); }
-  }, [load]);
-
-  const handleSort = (col) => {
-    if (sortCol === col) setSortDir(d => -d);
-    else { setSortCol(col); setSortDir(-1); }
-  };
-
-  const getField = (m, ...keys) => {
-    for (const k of keys) {
-      const v = m[k] ?? m[k.toLowerCase()] ?? m[k.charAt(0).toUpperCase() + k.slice(1)];
-      if (v !== undefined && v !== null) return v;
-    }
-    return null;
-  };
-
-  const sorted = [...markets].sort((a, b) => {
-    const av = getField(a, sortCol) ?? -9999;
-    const bv = getField(b, sortCol) ?? -9999;
-    return sortDir * (av - bv);
-  });
-
-  const fmtApr = (v) => {
-    if (v === null || v === undefined) return "—";
-    const n = typeof v === "number" ? v : parseFloat(v);
-    if (isNaN(n)) return "—";
-    // Boros returns APR as decimal (0.06) or percent (6.0) — normalise
-    const pct = Math.abs(n) < 5 ? n * 100 : n;
-    return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
-  };
-
-  const spreadColor = (implied, underlying) => {
-    if (implied === null || underlying === null) return "var(--text-muted)";
-    const diff = underlying - implied; // positive = hedge profitable (underlying > fixed)
-    if (diff > 10) return "#00d4aa";
-    if (diff > 0)  return "#7fdfcc";
-    if (diff > -5) return "#aaa";
-    return "#ff8fa0";
-  };
-
-  const thS = (col) => ({
-    padding: "7px 10px", textAlign: "right", cursor: "pointer", userSelect: "none",
-    color: sortCol === col ? "#4a9eff" : "#bbb",
-    fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
-    fontWeight: sortCol === col ? 700 : 400,
-  });
-
-  const btnStyle = (active) => ({
-    boxSizing: "border-box",
-    background: active ? "#4a9eff22" : "transparent",
-    border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
-    borderRadius: 4, color: active ? "#4a9eff" : "var(--text-dim)",
-    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
-    padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
-  });
-
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       <div style={{ marginBottom: 12 }}>
@@ -1646,17 +1518,6 @@ function BorosPage() {
         </h2>
         <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
           Boros implied APR vs underlying funding rate · lock your funding cost at a fixed rate
-        </div>
-      </div>
-
-      {/* Controls encadré */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Source</span>
-          <span style={{ fontSize: 10, background: "#a855f722", border: "1px solid #a855f7", borderRadius: 4, color: "#a855f7", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, padding: "5px 12px", letterSpacing: "0.05em" }}>Boros · Pendle</span>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button onClick={load} disabled={loading} style={btnStyle(!loading)}>⟳ REFRESH</button>
-          </div>
         </div>
       </div>
 
@@ -1676,83 +1537,30 @@ function BorosPage() {
         </div>
       </div>
 
-      {loading && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff44", fontSize: 11, letterSpacing: "0.15em" }}>
-          LOADING BOROS MARKETS…
+      {/* Coming soon banner */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid #a855f744", borderRadius: 10, padding: "28px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 11, color: "#a855f7", fontWeight: 600, letterSpacing: "0.12em", marginBottom: 10 }}>
+          COMING SOON · NEEDS BACKEND
         </div>
-      )}
-
-      {error && !loading && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid #ff4d6d44", borderRadius: 10, padding: "20px 24px" }}>
-          <div style={{ color: "#ff4d6d", fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Failed to load Boros data</div>
-          <div style={{ color: "var(--text-dim)", fontSize: 10, marginBottom: 12 }}>{error}</div>
-          <div style={{ fontSize: 9, color: "var(--text-muted)", lineHeight: 1.8, background: "var(--bg-alt)", borderRadius: 6, padding: "10px 12px", marginBottom: 12 }}>
-            The Boros API (<span style={{ color: "#4a9eff" }}>api.boros.finance</span>) restricts direct browser access.
-            Both direct and proxy attempts failed.{" "}
-            View markets directly at{" "}
-            <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer" style={{ color: "#a855f7" }}>boros.pendle.finance</a>.
-          </div>
-          <button onClick={load} style={{ background: "#4a9eff22", border: "1px solid #4a9eff", borderRadius: 4, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 14px", cursor: "pointer" }}>⟳ RETRY</button>
+        <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.8, marginBottom: 16 }}>
+          The Boros API restricts direct browser access — a backend proxy is required.<br />
+          Live market data will be enabled once the server is set up.
         </div>
-      )}
-
-      {!loading && !error && sorted.length === 0 && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--ghost)", fontSize: 11, letterSpacing: "0.1em" }}>
-          No markets found
-        </div>
-      )}
-
-      {sorted.length > 0 && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", flex: "1 1 auto" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 580 }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  <th style={{ padding: "8px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Market</th>
-                  <th onClick={() => handleSort("underlyingApr")} style={thS("underlyingApr")}>Underlying APR{sortCol === "underlyingApr" ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
-                  <th onClick={() => handleSort("impliedApr")} style={thS("impliedApr")}>Implied APR (Boros){sortCol === "impliedApr" ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
-                  <th onClick={() => handleSort("markApr")} style={{ ...thS("markApr"), borderLeft: "1px solid var(--border)" }}>Mark APR{sortCol === "markApr" ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
-                  <th style={{ padding: "8px 10px", textAlign: "right", color: "#bbb", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Hedge Benefit</th>
-                  <th style={{ padding: "8px 10px", textAlign: "center", color: "#bbb", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((m, i) => {
-                  const name = getField(m, "name", "symbol", "market", "asset", "coin", "id") ?? `Market ${i}`;
-                  const implied    = getField(m, "impliedApr", "implied_apr", "iApr");
-                  const underlying = getField(m, "underlyingApr", "underlying_apr", "uApr", "fundingRate");
-                  const mark       = getField(m, "markApr", "mark_apr");
-                  const status     = getField(m, "marketStatus", "status", "state") ?? "—";
-                  const benefit    = (implied !== null && underlying !== null) ? (underlying - implied) : null;
-
-                  return (
-                    <tr key={i} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                      <td style={{ padding: "8px 12px", color: "var(--text)", fontWeight: 600 }}>{String(name).toUpperCase()}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", color: aprColor(underlying) }}>{fmtApr(underlying)}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", color: "#a855f7", fontWeight: 500 }}>{fmtApr(implied)}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", color: aprColor(mark), borderLeft: "1px solid var(--border)" }}>{fmtApr(mark)}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", color: spreadColor(implied, underlying), fontWeight: 600 }}>
-                        {benefit !== null ? `${benefit >= 0 ? "+" : ""}${(Math.abs(benefit) < 5 ? benefit * 100 : benefit).toFixed(2)}%` : "—"}
-                      </td>
-                      <td style={{ padding: "7px 10px", textAlign: "center" }}>
-                        <span style={{
-                          fontSize: 8, borderRadius: 3, padding: "2px 6px", letterSpacing: "0.08em",
-                          background: String(status).toLowerCase().includes("activ") ? "#00d4aa18" : "#ffffff11",
-                          border: `1px solid ${String(status).toLowerCase().includes("activ") ? "#00d4aa44" : "var(--border)"}`,
-                          color: String(status).toLowerCase().includes("activ") ? "#00d4aa" : "var(--text-muted)",
-                        }}>{String(status).toUpperCase()}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 9, color: "var(--ghost)" }}>
-            {sorted.length} markets · source: Boros (Pendle) · implied APR = fixed rate you lock in by trading YU
-          </div>
-        </div>
-      )}
+        <a
+          href="https://boros.pendle.finance"
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: "inline-block",
+            background: "#a855f722", border: "1px solid #a855f7",
+            borderRadius: 6, color: "#a855f7",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+            padding: "8px 20px", textDecoration: "none", letterSpacing: "0.08em",
+          }}
+        >
+          ↗ Open boros.pendle.finance
+        </a>
+      </div>
     </div>
   );
 }
