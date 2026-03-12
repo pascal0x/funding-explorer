@@ -1509,23 +1509,38 @@ function ArbitragePage({ onNavigate }) {
 
 // ── BOROS / HEDGE ─────────────────────────────────────────────────────────────
 const BOROS_BASE = "https://api.boros.finance/core";
+const BOROS_CORS_PROXY = "https://corsproxy.io/?url=";
+
+// Try direct fetch, fallback to CORS proxy if blocked
+async function borosFetch(url) {
+  try {
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (r.ok) return r.json();
+    // Auth error — don't bother retrying via proxy
+    if (r.status === 401 || r.status === 403) throw new Error(`Boros API ${r.status}`);
+  } catch (e) {
+    if (/Boros API \d/.test(e.message)) throw e;
+    // Network/CORS error — fall through to proxy
+  }
+  const proxyUrl = `${BOROS_CORS_PROXY}${encodeURIComponent(url)}`;
+  const r = await fetch(proxyUrl, { headers: { Accept: "application/json", "x-requested-with": "XMLHttpRequest" } });
+  if (!r.ok) throw new Error(`Boros API ${r.status}`);
+  return r.json();
+}
 
 // Fetch all active Boros markets with full APR data (list + per-market detail)
 async function fetchBorosMarkets() {
-  const listRes = await fetch(`${BOROS_BASE}/v1/markets?limit=100&isWhitelisted=true`, {
-    headers: { "Accept": "application/json" },
-  });
-  if (!listRes.ok) throw new Error(`Boros API ${listRes.status}`);
-  const listJson = await listRes.json();
+  const listJson = await borosFetch(`${BOROS_BASE}/v1/markets?limit=100&isWhitelisted=true`);
   const list = listJson.results ?? (Array.isArray(listJson) ? listJson : []);
+  if (!list.length) return [];
 
   const now = Date.now() / 1000;
-  const active = list.filter(m => (m.imData?.maturity ?? 0) > now);
+  // Include markets with unknown maturity (null/0) as well as future-expiry
+  const active = list.filter(m => !m.imData?.maturity || m.imData.maturity > now);
   if (!active.length) return [];
 
   const details = await Promise.all(active.map(m =>
-    fetch(`${BOROS_BASE}/v1/markets/${m.marketId}`, { headers: { "Accept": "application/json" } })
-      .then(r => r.ok ? r.json() : null).catch(() => null)
+    borosFetch(`${BOROS_BASE}/v1/markets/${m.marketId}`).catch(() => null)
   ));
 
   return details.filter(Boolean).map(m => {
@@ -1536,12 +1551,12 @@ async function fetchBorosMarkets() {
       coin,
       platform:      m.metadata?.platformName ?? "",
       maturity:      m.imData?.maturity ?? 0,
-      markApr:       m.data?.markApr     ?? null,   // decimal (0.07 = 7%)
-      impliedApr:    m.data?.markApr     ?? null,   // alias for BorosPage columns
-      underlyingApr: m.data?.floatingApr ?? null,   // current floating rate
-      floatingApr:   m.data?.floatingApr ?? null,
-      midApr:        m.data?.midApr      ?? null,
-      status:        m.data?.state       ?? "—",
+      impliedApr:    m.data?.impliedApr    ?? m.data?.markApr     ?? null,
+      markApr:       m.data?.markApr                              ?? null,
+      underlyingApr: m.data?.underlyingApr ?? m.data?.floatingApr ?? null,
+      floatingApr:   m.data?.floatingApr                         ?? null,
+      midApr:        m.data?.midApr                              ?? null,
+      status:        m.data?.state ?? m.data?.marketStatus       ?? "—",
     };
   }).sort((a, b) => a.maturity - b.maturity);
 }
@@ -1671,13 +1686,13 @@ function BorosPage() {
         <div style={{ background: "var(--bg-card)", border: "1px solid #ff4d6d44", borderRadius: 10, padding: "20px 24px" }}>
           <div style={{ color: "#ff4d6d", fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Failed to load Boros data</div>
           <div style={{ color: "var(--text-dim)", fontSize: 10, marginBottom: 12 }}>{error}</div>
-          {error.includes("CORS") || error.includes("fetch") || error.includes("network") || error.includes("Failed") ? (
-            <div style={{ fontSize: 9, color: "var(--text-muted)", lineHeight: 1.8, background: "var(--bg-alt)", borderRadius: 6, padding: "10px 12px" }}>
-              <span style={{ color: "#4a9eff" }}>CORS blocked</span> — the Boros API requires a backend proxy to be accessed from the browser.{" "}
-              This will be resolved when the backend is set up.
-            </div>
-          ) : null}
-          <button onClick={load} style={{ marginTop: 12, background: "#4a9eff22", border: "1px solid #4a9eff", borderRadius: 4, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 14px", cursor: "pointer" }}>⟳ RETRY</button>
+          <div style={{ fontSize: 9, color: "var(--text-muted)", lineHeight: 1.8, background: "var(--bg-alt)", borderRadius: 6, padding: "10px 12px", marginBottom: 12 }}>
+            The Boros API (<span style={{ color: "#4a9eff" }}>api.boros.finance</span>) restricts direct browser access.
+            Both direct and proxy attempts failed.{" "}
+            View markets directly at{" "}
+            <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer" style={{ color: "#a855f7" }}>boros.pendle.finance</a>.
+          </div>
+          <button onClick={load} style={{ background: "#4a9eff22", border: "1px solid #4a9eff", borderRadius: 4, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 14px", cursor: "pointer" }}>⟳ RETRY</button>
         </div>
       )}
 
