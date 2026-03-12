@@ -484,6 +484,25 @@ async function fetchLighterLiveFunding(coin) {
   } catch { return null; }
 }
 
+// ── Module-level cache for Compare/Spread (survives navigation) ───────────────
+// Key: "venue-days", value: [{coin, apr7, apr30, apr90}]
+const _venueAprCache = {};
+
+async function apiFetchVenueBatch(venue, coins, days) {
+  const key = `${venue}-${days}-${coins.join(",")}`;
+  if (_venueAprCache[key]) return _venueAprCache[key];
+  try {
+    const res = await fetch(`/api/funding/batch?venue=${venue}&coins=${encodeURIComponent(coins.join(","))}&days=${days}`);
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      _venueAprCache[key] = data;
+      return data;
+    }
+  } catch { /* fallback below */ }
+  return null; // signals caller to use legacy path
+}
+
 // ── Backend API wrapper ───────────────────────────────────────────────────────
 // In production, /api is proxied to the Node.js backend (nginx).
 // In dev without backend, falls back to direct exchange calls.
@@ -1207,33 +1226,37 @@ function ArbitragePage({ onNavigate }) {
   const loadVenue = useCallback(async (vid) => {
     if (loadedRef.current[vid]) return;
     loadedRef.current[vid] = true;
-    abortRefs.current[vid] = false;
 
     const assets = VENUE_ASSETS[vid] ?? VENUE_ASSETS.bn;
     setLoadingVenues(prev => new Set([...prev, vid]));
     setProgressMap(prev => ({ ...prev, [vid]: { done: 0, total: assets.length } }));
 
+    // Try batch endpoint first (1 request, uses DB cache)
+    const batch = await apiFetchVenueBatch(vid, assets, 91);
+    if (batch) {
+      setVenueData(prev => ({ ...prev, [vid]: batch }));
+      setProgressMap(prev => ({ ...prev, [vid]: { done: assets.length, total: assets.length } }));
+      setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
+      return;
+    }
+
+    // Fallback: individual calls
     const now = Date.now();
     const D7  = 7  * 24 * 3600 * 1000;
     const D30 = 30 * 24 * 3600 * 1000;
     const CONCURRENCY = 20;
     const out = [];
-
     for (let i = 0; i < assets.length; i += CONCURRENCY) {
-      if (abortRefs.current[vid]) break;
-      const batch = assets.slice(i, i + CONCURRENCY);
-      const batchRes = await Promise.all(batch.map(async (coin) => {
+      const slice = assets.slice(i, i + CONCURRENCY);
+      const res = await Promise.all(slice.map(async (coin) => {
         try {
-          let d90 = [];
-          d90 = await apiFetchHistory(vid, coin, 91).catch(() => []);
+          const d90 = await apiFetchHistory(vid, coin, 91).catch(() => []);
           const d30 = d90.filter(d => d.time >= now - D30);
           const d7  = d30.filter(d => d.time >= now - D7);
           return { coin, apr7: venueAvgAPR(d7, vid), apr30: venueAvgAPR(d30, vid), apr90: venueAvgAPR(d90, vid) };
-        } catch {
-          return { coin, apr7: null, apr30: null, apr90: null };
-        }
+        } catch { return { coin, apr7: null, apr30: null, apr90: null }; }
       }));
-      out.push(...batchRes);
+      out.push(...res);
       setProgressMap(prev => ({ ...prev, [vid]: { ...prev[vid], done: Math.min(assets.length, i + CONCURRENCY) } }));
       setVenueData(prev => ({ ...prev, [vid]: [...out] }));
     }
@@ -1728,39 +1751,44 @@ function ComparePage({ onNavigate }) {
   const loadVenue = useCallback(async (vid) => {
     if (loadedRef.current[vid]) return;
     loadedRef.current[vid] = true;
-    abortRefs.current[vid] = false;
 
-    // For non-HL venues: use dynamic list filtered to HL crypto (meaningful cross-venue comparison)
     const hlCryptoSet = new Set(MARKETS["Crypto"]);
     const assets = vid === "hl"
       ? ALL_ASSETS
       : (_dynVenueAssets[vid]?.filter(c => hlCryptoSet.has(c)) ?? ARBI_ASSETS);
     const freq = VENUE_FREQ[vid];
-    const CONCURRENCY = 20;
 
     setLoadingVenues(prev => new Set([...prev, vid]));
     setProgressMap(prev => ({ ...prev, [vid]: { done: 0, total: assets.length } }));
 
+    // Try batch endpoint first (1 request, uses DB cache)
+    const batchResult = await apiFetchVenueBatch(vid, assets, 91);
+    if (batchResult) {
+      const withCat = batchResult.map(r => ({ ...r, cat: getCat(r.coin) }));
+      setVenueData(prev => ({ ...prev, [vid]: withCat }));
+      setProgressMap(prev => ({ ...prev, [vid]: { done: assets.length, total: assets.length } }));
+      setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
+      return;
+    }
+
+    // Fallback: individual calls
+    const CONCURRENCY = 20;
     const out = [];
     for (let i = 0; i < assets.length; i += CONCURRENCY) {
-      if (abortRefs.current[vid]) break;
-      const batch = assets.slice(i, i + CONCURRENCY);
-      const batchRes = await Promise.all(batch.map(async (coin) => {
+      const slice = assets.slice(i, i + CONCURRENCY);
+      const res = await Promise.all(slice.map(async (coin) => {
         try {
-          let d90 = [];
-          d90 = await fetchWithRetry(() => apiFetchHistory(vid, coin, 91));
-
+          const d90 = await fetchWithRetry(() => apiFetchHistory(vid, coin, 91));
           const now = Date.now();
           const d30 = d90.filter(d => d.time >= now - 30*24*3600*1000);
           const d7  = d30.filter(d => d.time >= now - 7*24*3600*1000);
           return { coin, cat: getCat(coin), apr7: calcAPR(d7, freq), apr30: calcAPR(d30, freq), apr90: calcAPR(d90, freq) };
         } catch { return { coin, cat: getCat(coin), apr7: null, apr30: null, apr90: null }; }
       }));
-      out.push(...batchRes);
+      out.push(...res);
       setProgressMap(prev => ({ ...prev, [vid]: { ...prev[vid], done: Math.min(assets.length, i + CONCURRENCY) } }));
       setVenueData(prev => ({ ...prev, [vid]: [...out] }));
     }
-
     setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
   }, []);
 

@@ -12,6 +12,46 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── GET /api/funding/batch?venue=hl&coins=BTC,ETH,SOL&days=91 ────────────────
+// Returns [{coin, apr7, apr30, apr90}] — one round-trip per venue
+app.get("/api/funding/batch", async (req, res) => {
+  const { venue, coins, days = "91" } = req.query;
+  if (!venue || !coins) return res.status(400).json({ error: "venue and coins required" });
+
+  const coinList = coins.split(",").map(c => c.trim()).filter(Boolean);
+  const d = parseInt(days, 10);
+  const now = Date.now();
+  const D7  = 7  * 24 * 3600 * 1000;
+  const D30 = 30 * 24 * 3600 * 1000;
+  const freq = { hl: 24*365, bn: 3*365, by: 3*365, okx: 3*365, dy: 24*365, lt: 24*365, ad: 3*365 }[venue] ?? 24*365;
+
+  try {
+    const results = await Promise.all(coinList.map(async coin => {
+      try {
+        let data = await getRates(venue, coin, d);
+        if (!data.length) {
+          const live = await fetchVenue(venue, coin, d).catch(() => []);
+          if (live.length) {
+            const { insertRates } = await import("./db.js");
+            await insertRates(live.map(r => ({ venue, coin, time: r.time, rate: r.fundingRate })));
+            data = live;
+          }
+        }
+        const d30 = data.filter(r => r.time >= now - D30);
+        const d7  = data.filter(r => r.time >= now - D7);
+        const avg = (arr) => arr.length ? arr.reduce((s, r) => s + Number(r.fundingRate), 0) / arr.length * 100 * freq : null;
+        return { coin, apr7: avg(d7), apr30: avg(d30), apr90: avg(data) };
+      } catch {
+        return { coin, apr7: null, apr30: null, apr90: null };
+      }
+    }));
+    res.json(results);
+  } catch (e) {
+    console.error("[api/funding/batch]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GET /api/funding?venue=hl&coin=BTC&days=90 ────────────────────────────────
 // Returns [{time, fundingRate}] from DB, falls back to live fetch if DB empty
 app.get("/api/funding", async (req, res) => {
