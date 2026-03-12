@@ -1128,26 +1128,21 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
   );
 }
 
-// ── ARBI (cross-exchange historical averages) ─────────────────────────────────
-// Updated dynamically by fetchDynamicAssets() → HL crypto ∩ BN ∩ BY
-let ARBI_ASSETS = [
-  "BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF",
-  "HYPE","PEPE","TRUMP","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP",
-];
+// ── SPREAD (cross-exchange historical averages) ────────────────────────────────
+// Venues available for Spread — Lighter/Asterdex excluded (CORS blocked without backend)
+const SPREAD_VENUES = VENUES.filter(v => !["lt", "ad"].includes(v.id));
 
-// APR helpers — HL 1h intervals, BN/BY 8h intervals
-function hlAvgAPR(data) {
-  if (!data.length) return null;
-  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 24 * 365;
+// Generic APR helper using VENUE_FREQ
+function venueAvgAPR(data, vid) {
+  if (!data || !data.length) return null;
+  const freq = VENUE_FREQ[vid];
+  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * freq;
 }
-function bnAvgAPR(data) {
-  if (!data.length) return null;
-  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 3 * 365;
-}
-function byAvgAPR(data) {
-  if (!data.length) return null;
-  return data.reduce((s, d) => s + parseFloat(d.fundingRate), 0) / data.length * 100 * 3 * 365;
-}
+
+// Legacy helpers kept for backwards compat (used in Compare)
+function hlAvgAPR(data) { return venueAvgAPR(data, "hl"); }
+function bnAvgAPR(data) { return venueAvgAPR(data, "bn"); }
+function byAvgAPR(data) { return venueAvgAPR(data, "by"); }
 
 function aprColor(v) {
   if (v === null) return "#333";
@@ -1159,97 +1154,116 @@ function aprColor(v) {
 }
 
 function ArbitragePage({ onNavigate }) {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [sortCol, setSortCol] = useState("hlbn");
+  const [venueData, setVenueData]       = useState({});
+  const [loadingVenues, setLoadingVenues] = useState(new Set());
+  const [progressMap, setProgressMap]   = useState({});
+  const [selectedVenues, setSelectedVenues] = useState(new Set(["hl", "bn", "by"]));
+  const [sortCol, setSortCol] = useState("hl_bn");
   const [sortDir, setSortDir] = useState(-1);
   const [leverage, setLeverage] = useState(1);
   const [period, setPeriod] = useState("30");
-  const abortRef = useRef(false);
-  const hasLoaded = useRef(false);
+  const abortRefs = useRef({});
+  const loadedRef = useRef({});
 
-  const runLoad = useCallback(async () => {
-    setLoading(true);
-    abortRef.current = false;
-    setRows([]);
-    setProgress({ done: 0, total: ARBI_ASSETS.length });
+  const loadVenue = useCallback(async (vid) => {
+    if (loadedRef.current[vid]) return;
+    loadedRef.current[vid] = true;
+    abortRefs.current[vid] = false;
+
+    const assets = VENUE_ASSETS[vid] ?? VENUE_ASSETS.bn;
+    setLoadingVenues(prev => new Set([...prev, vid]));
+    setProgressMap(prev => ({ ...prev, [vid]: { done: 0, total: assets.length } }));
+
     const now = Date.now();
     const D7  = 7  * 24 * 3600 * 1000;
     const D30 = 30 * 24 * 3600 * 1000;
     const out = [];
     const CONCURRENCY = 2;
 
-    for (let i = 0; i < ARBI_ASSETS.length; i += CONCURRENCY) {
-      if (abortRef.current) break;
-      const batch = ARBI_ASSETS.slice(i, i + CONCURRENCY);
+    for (let i = 0; i < assets.length; i += CONCURRENCY) {
+      if (abortRefs.current[vid]) break;
+      const batch = assets.slice(i, i + CONCURRENCY);
       const batchRes = await Promise.all(batch.map(async (coin) => {
         try {
-          const [hlRaw, bnRaw, byRaw] = await Promise.all([
-            fetchAllFunding(coin, 90).catch(() => []),
-            fetchBinanceFundingHistory(coin, 91).catch(() => []),
-            fetchBybitFundingHistory(coin, 91).catch(() => []),
-          ]);
-
-          const hl7  = hlRaw.filter(d => d.time  >= now - D7);
-          const hl30 = hlRaw.filter(d => d.time  >= now - D30);
-          const bn7  = bnRaw.filter(d => d.time  >= now - D7);
-          const bn30 = bnRaw.filter(d => d.time  >= now - D30);
-          const by7  = byRaw.filter(d => d.time  >= now - D7);
-          const by30 = byRaw.filter(d => d.time  >= now - D30);
-
-          return {
-            coin,
-            hl7:  hlAvgAPR(hl7),  hl30:  hlAvgAPR(hl30),  hl90:  hlAvgAPR(hlRaw),
-            bn7:  bnAvgAPR(bn7),  bn30:  bnAvgAPR(bn30),  bn90:  bnAvgAPR(bnRaw),
-            by7:  byAvgAPR(by7),  by30:  byAvgAPR(by30),  by90:  byAvgAPR(byRaw),
-          };
+          let d90 = [];
+          if (vid === "hl")  d90 = await fetchAllFunding(coin, 90).catch(() => []);
+          else if (vid === "bn")  d90 = await fetchBinanceFundingHistory(coin, 91).catch(() => []);
+          else if (vid === "by")  d90 = await fetchBybitFundingHistory(coin, 91).catch(() => []);
+          else if (vid === "okx") d90 = await fetchOkxFundingHistory(coin, 91).catch(() => []);
+          else if (vid === "dy")  d90 = await fetchDydxFundingHistory(coin, 91).catch(() => []);
+          const d30 = d90.filter(d => d.time >= now - D30);
+          const d7  = d30.filter(d => d.time >= now - D7);
+          return { coin, apr7: venueAvgAPR(d7, vid), apr30: venueAvgAPR(d30, vid), apr90: venueAvgAPR(d90, vid) };
         } catch {
-          return { coin, hl7:null,hl30:null,hl90:null, bn7:null,bn30:null,bn90:null, by7:null,by30:null,by90:null };
+          return { coin, apr7: null, apr30: null, apr90: null };
         }
       }));
       out.push(...batchRes);
-      setProgress(p => ({ ...p, done: Math.min(p.total, i + CONCURRENCY) }));
-      setRows([...out]);
-      if (i + CONCURRENCY < ARBI_ASSETS.length) await new Promise(r => setTimeout(r, 200));
+      setProgressMap(prev => ({ ...prev, [vid]: { ...prev[vid], done: Math.min(assets.length, i + CONCURRENCY) } }));
+      setVenueData(prev => ({ ...prev, [vid]: [...out] }));
+      if (i + CONCURRENCY < assets.length) await new Promise(r => setTimeout(r, 150));
     }
-    setLoading(false);
+    setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
   }, []);
 
   useEffect(() => {
-    if (!hasLoaded.current) { hasLoaded.current = true; runLoad(); }
-  }, [runLoad]);
+    ["hl", "bn", "by"].forEach(vid => loadVenue(vid));
+  }, [loadVenue]);
+
+  const toggleVenue = (vid) => {
+    setSelectedVenues(prev => {
+      const next = new Set(prev);
+      if (next.has(vid)) {
+        if (next.size === 1) return next;
+        next.delete(vid);
+        // Reset sortCol if it involves the removed venue
+        setSortCol(sc => sc.includes(vid) ? "hl_bn" : sc);
+      } else {
+        next.add(vid);
+        loadVenue(vid);
+      }
+      return next;
+    });
+  };
 
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => -d);
     else { setSortCol(col); setSortDir(-1); }
   };
 
-  // Per-period derived rows with spread values
-  const withSpreads = rows.map(row => {
-    const hl = row[`hl${period}`] ?? null;
-    const bn = row[`bn${period}`] ?? null;
-    const by = row[`by${period}`] ?? null;
-    const hlbn = (hl !== null && bn !== null) ? Math.abs(hl - bn) : null;
-    const hlby = (hl !== null && by !== null) ? Math.abs(hl - by) : null;
-    const bnby = (bn !== null && by !== null) ? Math.abs(bn - by) : null;
-    return { ...row, hl, bn, by, hlbn, hlby, bnby };
+  // Ordered list of selected venues (preserving SPREAD_VENUES order)
+  const selVenues = SPREAD_VENUES.filter(v => selectedVenues.has(v.id));
+
+  // Spread pairs: all combinations of selected venues
+  const spreadPairs = [];
+  for (let a = 0; a < selVenues.length; a++) {
+    for (let b = a + 1; b < selVenues.length; b++) {
+      spreadPairs.push({ key: `${selVenues[a].id}_${selVenues[b].id}`, aV: selVenues[a], bV: selVenues[b] });
+    }
+  }
+
+  // All coins seen across selected venues
+  const periodKey = `apr${period}`;
+  const allCoins = [...new Set(selVenues.flatMap(v => venueData[v.id]?.map(r => r.coin) ?? []))];
+
+  const withSpreads = allCoins.map(coin => {
+    const row = { coin };
+    for (const v of selVenues) {
+      const entry = venueData[v.id]?.find(r => r.coin === coin);
+      row[v.id] = entry?.[periodKey] ?? null;
+    }
+    for (const { key, aV, bV } of spreadPairs) {
+      const va = row[aV.id], vb = row[bV.id];
+      row[key] = (va !== null && vb !== null) ? Math.abs(va - vb) : null;
+    }
+    return row;
   });
 
   const sorted = [...withSpreads].sort((a, b) => sortDir * ((a[sortCol] ?? -9999) - (b[sortCol] ?? -9999)));
 
-  // Returns { longId, shortId } for a pair — long = lower funding, short = higher funding
   const strat = (aId, aVal, bId, bVal) => {
     if (aVal === null || bVal === null) return null;
-    return aVal <= bVal
-      ? { longId: aId, shortId: bId }
-      : { longId: bId, shortId: aId };
-  };
-
-  const VL = {
-    hl: { label: "HL",  color: "#4a9eff" },
-    bn: { label: "BN",  color: "#f0b90b" },
-    by: { label: "BY",  color: "#e6a817" },
+    return aVal <= bVal ? { longId: aId, shortId: bId } : { longId: bId, shortId: aId };
   };
 
   const spreadColor = (v) => {
@@ -1278,11 +1292,7 @@ function ArbitragePage({ onNavigate }) {
     borderLeft: hasBorderLeft ? "1px solid var(--border)" : "none",
   });
 
-  const spreadPairs = [
-    { key: "hlbn", aId: "hl", bId: "bn" },
-    { key: "hlby", aId: "hl", bId: "by" },
-    { key: "bnby", aId: "bn", bId: "by" },
-  ];
+  const isLoading = loadingVenues.size > 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
@@ -1297,26 +1307,23 @@ function ArbitragePage({ onNavigate }) {
 
       {/* Controls encadré */}
       <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-        {/* Venue badges + refresh */}
+        {/* Venue row */}
         <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
-          {[
-            { id: "hl", label: "Hyperliquid", color: "#4a9eff" },
-            { id: "bn", label: "Binance",     color: "#f0b90b" },
-            { id: "by", label: "Bybit",       color: "#e6a817" },
-          ].map(v2 => (
-            <span key={v2.id} style={{
-              display: "inline-block",
-              background: `${v2.color}22`, border: `1px solid ${v2.color}`,
-              borderRadius: 4, color: v2.color,
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
-              padding: "5px 12px", letterSpacing: "0.05em",
-            }}>{v2.label}</span>
-          ))}
+          {SPREAD_VENUES.map(v2 => {
+            const active = selectedVenues.has(v2.id);
+            const loading2 = loadingVenues.has(v2.id);
+            const prog = progressMap[v2.id];
+            return (
+              <button key={v2.id} onClick={() => toggleVenue(v2.id)} style={btnStyle(active, v2.color)}>
+                {v2.label}{loading2 && prog ? ` (${prog.done}/${prog.total})` : ""}
+              </button>
+            );
+          })}
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button onClick={runLoad} disabled={loading} style={btnStyle(!loading)}>⟳ REFRESH</button>
-            {loading && (
-              <button onClick={() => abortRef.current = true} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 12px", cursor: "pointer" }}>■ STOP</button>
+            <button onClick={() => { selVenues.forEach(v => { loadedRef.current[v.id] = false; setVenueData(prev => ({ ...prev, [v.id]: undefined })); loadVenue(v.id); }); }} disabled={isLoading} style={btnStyle(!isLoading)}>⟳ REFRESH</button>
+            {isLoading && (
+              <button onClick={() => SPREAD_VENUES.forEach(v => { abortRefs.current[v.id] = true; })} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 12px", cursor: "pointer" }}>■ STOP</button>
             )}
           </div>
         </div>
@@ -1330,57 +1337,62 @@ function ArbitragePage({ onNavigate }) {
         {/* Leverage row */}
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Leverage</span>
-          {[1,3,6].map(l => (
+          {[1, 3, 6].map(l => (
             <button key={l} onClick={() => setLeverage(l)} style={btnStyle(leverage === l)}>{l}×</button>
           ))}
           {leverage > 1 && (
-            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>
-              spread APR = |rate_a − rate_b| × {leverage}
-            </span>
+            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>spread APR = |rate_a − rate_b| × {leverage}</span>
           )}
         </div>
       </div>
 
-      {loading && (
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9, color: "#4a9eff", marginBottom: 4, letterSpacing: "0.08em" }}>
-            {progress.done} / {progress.total} assets loaded
+      {/* Progress bars for loading venues */}
+      {[...loadingVenues].map(vid => {
+        const prog = progressMap[vid];
+        const vInfo = SPREAD_VENUES.find(v => v.id === vid);
+        if (!prog) return null;
+        return (
+          <div key={vid} style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 9, color: vInfo?.color ?? "#4a9eff", marginBottom: 3, letterSpacing: "0.08em" }}>
+              {vInfo?.label}: {prog.done} / {prog.total} assets
+            </div>
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 4, height: 3, overflow: "hidden" }}>
+              <div style={{ background: vInfo?.color ?? "#4a9eff", height: "100%", width: `${(prog.done / prog.total) * 100}%`, transition: "width 0.3s" }} />
+            </div>
           </div>
-          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 4, height: 3, overflow: "hidden" }}>
-            <div style={{ background: "#4a9eff", height: "100%", width: `${(progress.done / progress.total) * 100}%`, transition: "width 0.3s" }} />
-          </div>
-        </div>
-      )}
+        );
+      })}
 
       {sorted.length > 0 ? (
         <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", flex: "1 1 auto" }}>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 700 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 400 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <th style={{ padding: "7px 12px" }} />
-                  <th colSpan={3} style={{ padding: "6px 10px", textAlign: "center", color: "var(--text-dim)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 500 }}>
+                  <th colSpan={selVenues.length} style={{ padding: "6px 10px", textAlign: "center", color: "var(--text-dim)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 500 }}>
                     APR avg {period}d
                   </th>
-                  <th colSpan={3} style={{ padding: "6px 10px", textAlign: "center", color: "#4a9eff", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, borderLeft: "1px solid var(--border)" }}>
-                    SPREAD {period}d{leverage > 1 ? ` · ${leverage}×` : ""}
-                  </th>
+                  {spreadPairs.length > 0 && (
+                    <th colSpan={spreadPairs.length} style={{ padding: "6px 10px", textAlign: "center", color: "#4a9eff", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600, borderLeft: "1px solid var(--border)" }}>
+                      SPREAD {period}d{leverage > 1 ? ` · ${leverage}×` : ""}
+                    </th>
+                  )}
                   <th style={{ padding: "7px 12px", width: 40 }} />
                 </tr>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <th style={{ padding: "8px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Asset</th>
-                  {/* APR cols */}
-                  {[["hl","HL"],["bn","BN"],["by","BY"]].map(([id, label]) => (
-                    <th key={id} onClick={() => handleSort(id)} style={thStyle(id, false)}>
-                      <span style={{ color: VL[id].color }}>{label}</span>{sortCol === id ? (sortDir === -1 ? " ↓" : " ↑") : ""}
+                  {selVenues.map(v => (
+                    <th key={v.id} onClick={() => handleSort(v.id)} style={thStyle(v.id, false)}>
+                      <span style={{ color: v.color }}>{v.label.slice(0, 4)}</span>
+                      {sortCol === v.id ? (sortDir === -1 ? " ↓" : " ↑") : ""}
                     </th>
                   ))}
-                  {/* Spread cols */}
-                  {spreadPairs.map(({ key, aId, bId }, si) => (
+                  {spreadPairs.map(({ key, aV, bV }, si) => (
                     <th key={key} onClick={() => handleSort(key)} style={thStyle(key, si === 0)}>
-                      <span style={{ color: VL[aId].color }}>{VL[aId].label}</span>
+                      <span style={{ color: aV.color }}>{aV.label.slice(0, 2)}</span>
                       <span style={{ color: "var(--text-muted)" }}>↔</span>
-                      <span style={{ color: VL[bId].color }}>{VL[bId].label}</span>
+                      <span style={{ color: bV.color }}>{bV.label.slice(0, 2)}</span>
                       {sortCol === key ? (sortDir === -1 ? " ↓" : " ↑") : ""}
                     </th>
                   ))}
@@ -1388,48 +1400,252 @@ function ArbitragePage({ onNavigate }) {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((row, i) => {
-                  const hlbnS = strat("hl", row.hl, "bn", row.bn);
-                  const hlbyS = strat("hl", row.hl, "by", row.by);
-                  const bnbyS = strat("bn", row.bn, "by", row.by);
-                  const stratMap = { hlbn: hlbnS, hlby: hlbyS, bnby: bnbyS };
-                  return (
-                    <tr key={row.coin} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                      <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{row.coin}</td>
-                      {/* APR cells */}
-                      {["hl","bn","by"].map(id => (
-                        <td key={id} style={{ padding: "7px 10px", textAlign: "right", color: aprColor(row[id]), fontWeight: sortCol === id ? 600 : 400 }}>
-                          {row[id] !== null ? fmtAPR(row[id]) : "—"}
-                        </td>
-                      ))}
-                      {/* Spread cells */}
-                      {spreadPairs.map(({ key, aId, bId }, si) => {
-                        const spread = row[key];
-                        const s = stratMap[key];
-                        return (
-                          <td key={key} style={{ padding: "5px 10px", textAlign: "right", borderLeft: si === 0 ? "1px solid var(--border)" : "none", verticalAlign: "middle" }}>
-                            {spread !== null ? (
-                              <div>
-                                <div style={{ color: spreadColor(spread * leverage), fontWeight: sortCol === key ? 700 : 500 }}>
-                                  {fmtAPR(spread * leverage)}
-                                </div>
-                                {s && (
-                                  <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 3 }}>
-                                    <span style={{ fontSize: 8, background: "#00d4aa18", border: "1px solid #00d4aa33", borderRadius: 3, padding: "1px 5px", color: "#00d4aa", letterSpacing: "0.05em" }}>
-                                      L {VL[s.longId].label}
-                                    </span>
-                                    <span style={{ fontSize: 8, background: "#ff4d6d18", border: "1px solid #ff4d6d33", borderRadius: 3, padding: "1px 5px", color: "#ff4d6d", letterSpacing: "0.05em" }}>
-                                      S {VL[s.shortId].label}
-                                    </span>
-                                  </div>
-                                )}
+                {sorted.map((row, i) => (
+                  <tr key={row.coin} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                    <td style={{ padding: "7px 12px", color: "var(--text)", fontWeight: 500 }}>{row.coin}</td>
+                    {selVenues.map(v => (
+                      <td key={v.id} style={{ padding: "7px 10px", textAlign: "right", color: aprColor(row[v.id]), fontWeight: sortCol === v.id ? 600 : 400 }}>
+                        {row[v.id] !== null ? fmtAPR(row[v.id]) : "—"}
+                      </td>
+                    ))}
+                    {spreadPairs.map(({ key, aV, bV }, si) => {
+                      const spread = row[key];
+                      const s = strat(aV.id, row[aV.id], bV.id, row[bV.id]);
+                      const vById = { [aV.id]: aV, [bV.id]: bV };
+                      return (
+                        <td key={key} style={{ padding: "5px 10px", textAlign: "right", borderLeft: si === 0 ? "1px solid var(--border)" : "none", verticalAlign: "middle" }}>
+                          {spread !== null ? (
+                            <div>
+                              <div style={{ color: spreadColor(spread * leverage), fontWeight: sortCol === key ? 700 : 500 }}>
+                                {fmtAPR(spread * leverage)}
                               </div>
-                            ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
-                          </td>
-                        );
-                      })}
-                      <td style={{ padding: "7px 12px", textAlign: "center" }}>
-                        <button onClick={() => onNavigate(row.coin)} title="Explorer" style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
+                              {s && (
+                                <div style={{ display: "flex", gap: 3, justifyContent: "flex-end", marginTop: 3 }}>
+                                  <span style={{ fontSize: 8, background: "#00d4aa18", border: "1px solid #00d4aa33", borderRadius: 3, padding: "1px 4px", color: "#00d4aa" }}>
+                                    L {vById[s.longId]?.label.slice(0,2) ?? s.longId}
+                                  </span>
+                                  <span style={{ fontSize: 8, background: "#ff4d6d18", border: "1px solid #ff4d6d33", borderRadius: 3, padding: "1px 4px", color: "#ff4d6d" }}>
+                                    S {vById[s.shortId]?.label.slice(0,2) ?? s.shortId}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                        </td>
+                      );
+                    })}
+                    <td style={{ padding: "7px 12px", textAlign: "center" }}>
+                      <button onClick={() => onNavigate(row.coin)} title="Explorer" style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 3, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 7px", cursor: "pointer" }}>→</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 9, color: "var(--ghost)" }}>
+            {sorted.length} assets · L = long (low funding) · S = short (high funding) · Lighter & Asterdex need backend (CORS)
+          </div>
+        </div>
+      ) : !isLoading && (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--ghost)", fontSize: 11, letterSpacing: "0.1em" }}>
+          Select venues and load data…
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── BOROS / HEDGE ─────────────────────────────────────────────────────────────
+async function fetchBorosMarkets() {
+  const res = await fetch("https://api.boros.finance/core/v1/markets", {
+    headers: { "Accept": "application/json" },
+  });
+  if (!res.ok) throw new Error(`Boros API ${res.status}`);
+  const json = await res.json();
+  // Handle possible response shapes: { markets: [...] } or { data: [...] } or [...]
+  return Array.isArray(json) ? json : (json.markets ?? json.data ?? []);
+}
+
+function BorosPage() {
+  const [markets, setMarkets] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [sortCol, setSortCol] = useState("impliedApr");
+  const [sortDir, setSortDir] = useState(-1);
+  const hasLoaded = useRef(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchBorosMarkets();
+      setMarkets(data);
+    } catch (e) {
+      setError(e.message);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoaded.current) { hasLoaded.current = true; load(); }
+  }, [load]);
+
+  const handleSort = (col) => {
+    if (sortCol === col) setSortDir(d => -d);
+    else { setSortCol(col); setSortDir(-1); }
+  };
+
+  const getField = (m, ...keys) => {
+    for (const k of keys) {
+      const v = m[k] ?? m[k.toLowerCase()] ?? m[k.charAt(0).toUpperCase() + k.slice(1)];
+      if (v !== undefined && v !== null) return v;
+    }
+    return null;
+  };
+
+  const sorted = [...markets].sort((a, b) => {
+    const av = getField(a, sortCol) ?? -9999;
+    const bv = getField(b, sortCol) ?? -9999;
+    return sortDir * (av - bv);
+  });
+
+  const fmtApr = (v) => {
+    if (v === null || v === undefined) return "—";
+    const n = typeof v === "number" ? v : parseFloat(v);
+    if (isNaN(n)) return "—";
+    // Boros returns APR as decimal (0.06) or percent (6.0) — normalise
+    const pct = Math.abs(n) < 5 ? n * 100 : n;
+    return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+  };
+
+  const spreadColor = (implied, underlying) => {
+    if (implied === null || underlying === null) return "var(--text-muted)";
+    const diff = underlying - implied; // positive = hedge profitable (underlying > fixed)
+    if (diff > 10) return "#00d4aa";
+    if (diff > 0)  return "#7fdfcc";
+    if (diff > -5) return "#aaa";
+    return "#ff8fa0";
+  };
+
+  const thS = (col) => ({
+    padding: "7px 10px", textAlign: "right", cursor: "pointer", userSelect: "none",
+    color: sortCol === col ? "#4a9eff" : "#bbb",
+    fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+    fontWeight: sortCol === col ? 700 : 400,
+  });
+
+  const btnStyle = (active) => ({
+    boxSizing: "border-box",
+    background: active ? "#4a9eff22" : "transparent",
+    border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
+    borderRadius: 4, color: active ? "#4a9eff" : "var(--text-dim)",
+    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
+    padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
+      <div style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
+          Hedge<span style={{ color: "#4a9eff" }}> · fixed rate</span>
+        </h2>
+        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
+          Boros implied APR vs underlying funding rate · lock your funding cost at a fixed rate
+        </div>
+      </div>
+
+      {/* Controls encadré */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Source</span>
+          <span style={{ fontSize: 10, background: "#a855f722", border: "1px solid #a855f7", borderRadius: 4, color: "#a855f7", fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, padding: "5px 12px", letterSpacing: "0.05em" }}>Boros · Pendle</span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button onClick={load} disabled={loading} style={btnStyle(!loading)}>⟳ REFRESH</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Strategy info box */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px", marginBottom: 14, fontSize: 10, color: "var(--text-dim)", lineHeight: 1.7 }}>
+        <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 6, fontSize: 11 }}>How to hedge funding rate exposure</div>
+        <div>
+          <span style={{ color: "#00d4aa", fontWeight: 600 }}>LONG YU on Boros</span>
+          {" "}→ pay fixed Implied APR, receive floating Underlying APR
+        </div>
+        <div>
+          <span style={{ color: "#ff4d6d", fontWeight: 600 }}>SHORT YU on Boros</span>
+          {" "}→ receive fixed Implied APR, pay floating Underlying APR
+        </div>
+        <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 9 }}>
+          Hedge benefit = Underlying APR − Implied APR · positive = cost of hedge is below current funding (profitable hedge)
+        </div>
+      </div>
+
+      {loading && (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff44", fontSize: 11, letterSpacing: "0.15em" }}>
+          LOADING BOROS MARKETS…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid #ff4d6d44", borderRadius: 10, padding: "20px 24px" }}>
+          <div style={{ color: "#ff4d6d", fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Failed to load Boros data</div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10, marginBottom: 12 }}>{error}</div>
+          {error.includes("CORS") || error.includes("fetch") || error.includes("network") || error.includes("Failed") ? (
+            <div style={{ fontSize: 9, color: "var(--text-muted)", lineHeight: 1.8, background: "var(--bg-alt)", borderRadius: 6, padding: "10px 12px" }}>
+              <span style={{ color: "#4a9eff" }}>CORS blocked</span> — the Boros API requires a backend proxy to be accessed from the browser.{" "}
+              This will be resolved when the backend is set up.
+            </div>
+          ) : null}
+          <button onClick={load} style={{ marginTop: 12, background: "#4a9eff22", border: "1px solid #4a9eff", borderRadius: 4, color: "#4a9eff", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 14px", cursor: "pointer" }}>⟳ RETRY</button>
+        </div>
+      )}
+
+      {!loading && !error && sorted.length === 0 && (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--ghost)", fontSize: 11, letterSpacing: "0.1em" }}>
+          No markets found
+        </div>
+      )}
+
+      {sorted.length > 0 && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", flex: "1 1 auto" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 580 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                  <th style={{ padding: "8px 12px", textAlign: "left", color: "#4a9eff", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 500 }}>Market</th>
+                  <th onClick={() => handleSort("underlyingApr")} style={thS("underlyingApr")}>Underlying APR{sortCol === "underlyingApr" ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
+                  <th onClick={() => handleSort("impliedApr")} style={thS("impliedApr")}>Implied APR (Boros){sortCol === "impliedApr" ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
+                  <th onClick={() => handleSort("markApr")} style={{ ...thS("markApr"), borderLeft: "1px solid var(--border)" }}>Mark APR{sortCol === "markApr" ? (sortDir === -1 ? " ↓" : " ↑") : ""}</th>
+                  <th style={{ padding: "8px 10px", textAlign: "right", color: "#bbb", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Hedge Benefit</th>
+                  <th style={{ padding: "8px 10px", textAlign: "center", color: "#bbb", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase" }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((m, i) => {
+                  const name = getField(m, "name", "symbol", "market", "asset", "coin", "id") ?? `Market ${i}`;
+                  const implied    = getField(m, "impliedApr", "implied_apr", "iApr");
+                  const underlying = getField(m, "underlyingApr", "underlying_apr", "uApr", "fundingRate");
+                  const mark       = getField(m, "markApr", "mark_apr");
+                  const status     = getField(m, "marketStatus", "status", "state") ?? "—";
+                  const benefit    = (implied !== null && underlying !== null) ? (underlying - implied) : null;
+
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                      <td style={{ padding: "8px 12px", color: "var(--text)", fontWeight: 600 }}>{String(name).toUpperCase()}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", color: aprColor(underlying) }}>{fmtApr(underlying)}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", color: "#a855f7", fontWeight: 500 }}>{fmtApr(implied)}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", color: aprColor(mark), borderLeft: "1px solid var(--border)" }}>{fmtApr(mark)}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", color: spreadColor(implied, underlying), fontWeight: 600 }}>
+                        {benefit !== null ? `${benefit >= 0 ? "+" : ""}${(Math.abs(benefit) < 5 ? benefit * 100 : benefit).toFixed(2)}%` : "—"}
+                      </td>
+                      <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                        <span style={{
+                          fontSize: 8, borderRadius: 3, padding: "2px 6px", letterSpacing: "0.08em",
+                          background: String(status).toLowerCase().includes("activ") ? "#00d4aa18" : "#ffffff11",
+                          border: `1px solid ${String(status).toLowerCase().includes("activ") ? "#00d4aa44" : "var(--border)"}`,
+                          color: String(status).toLowerCase().includes("activ") ? "#00d4aa" : "var(--text-muted)",
+                        }}>{String(status).toUpperCase()}</span>
                       </td>
                     </tr>
                   );
@@ -1437,13 +1653,9 @@ function ArbitragePage({ onNavigate }) {
               </tbody>
             </table>
           </div>
-          <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 9, color: "var(--ghost)", display: "flex", justifyContent: "space-between" }}>
-            <span>{sorted.length} assets · L = long (low funding) · S = short (high funding) · — = unavailable</span>
+          <div style={{ padding: "7px 12px", borderTop: "1px solid var(--border)", fontSize: 9, color: "var(--ghost)" }}>
+            {sorted.length} markets · source: Boros (Pendle) · implied APR = fixed rate you lock in by trading YU
           </div>
-        </div>
-      ) : !loading && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--ghost)", fontSize: 11, letterSpacing: "0.1em" }}>
-          Loading cross-exchange data...
         </div>
       )}
     </div>
@@ -2148,6 +2360,7 @@ export default function App() {
     { id: "trend",    icon: "⟲", label: "Trend" },
     { id: "compare",  icon: "⊞", label: "Compare" },
     { id: "arbi",     icon: "⇌", label: "Spread" },
+    { id: "hedge",    icon: "⊛", label: "Hedge" },
   ];
 
   const navBtnStyle = (id) => ({
@@ -2276,7 +2489,9 @@ export default function App() {
             ? <TrendPage />
             : page === "compare"
             ? <ComparePage onNavigate={navigateToExplorer} />
-            : <ArbitragePage onNavigate={navigateToExplorer} />
+            : page === "arbi"
+            ? <ArbitragePage onNavigate={navigateToExplorer} />
+            : <BorosPage />
           }
         </div>
       </div>
