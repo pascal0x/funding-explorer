@@ -162,12 +162,23 @@ app.get("/api/boros", async (req, res) => {
         .catch(() => null)
     ));
 
+    const COLLATERALS = ["USDT", "USDC", "USD", "BTC", "ETH", "SOL", "USDE", "DAI"];
+    const extractCoinCollateral = (raw) => {
+      for (const col of COLLATERALS) {
+        if (raw.endsWith(col) && raw.length > col.length) {
+          return { coin: raw.slice(0, -col.length), collateral: col };
+        }
+      }
+      return { coin: raw, collateral: null };
+    };
+
     const markets = details.filter(Boolean).map(m => {
       const raw = m.metadata?.name ?? "";
-      const coin = raw.replace(/USDT$/, "").replace(/USD$/, "").replace(/USDC$/, "");
+      const { coin, collateral } = extractCoinCollateral(raw);
       return {
         name:          m.imData?.name ?? raw,
         coin,
+        collateral,
         platform:      m.metadata?.platformName ?? "",
         maturity:      m.imData?.maturity ?? 0,
         impliedApr:    m.data?.impliedApr    ?? m.data?.markApr     ?? null,

@@ -1791,7 +1791,9 @@ function BorosPage() {
               <tbody>
                 {sorted.map((m, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                    <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>{m.coin || m.name}</td>
+                    <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>
+                      {m.coin || m.name}{m.collateral ? <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>-{m.collateral}</span> : ""}
+                    </td>
                     <td style={{ ...tdStyle("left"), color: "var(--text-dim)" }}>{m.platform || "—"}</td>
                     <td style={tdStyle()}>{fmtDate(m.maturity)}</td>
                     <td style={{ ...tdStyle(), color: aprColor(m.implied) }}>{fmtPct(m.implied)}</td>
