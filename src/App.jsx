@@ -1567,12 +1567,17 @@ async function fetchBorosMarkets() {
 }
 
 function BorosPage() {
-  const [markets, setMarkets] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
-  const [sortCol, setSortCol] = useState("benefit");
-  const [sortDir, setSortDir] = useState(-1);
+  const [markets, setMarkets]           = useState(null);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState(null);
+  const [sortCol, setSortCol]           = useState("longYU");
+  const [sortDir, setSortDir]           = useState(-1);
+  const [period, setPeriod]             = useState("live");      // "live" | "7d" | "30d"
+  const [selectedVenue, setSelectedVenue] = useState("hl");
+  const [fundingAvgs, setFundingAvgs]   = useState({});          // { coin: { apr7, apr30 } }
+  const [fundingLoading, setFundingLoading] = useState(false);
 
+  // Fetch Boros markets once
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -1582,18 +1587,40 @@ function BorosPage() {
       .catch(e  => { setError(e.message); setLoading(false); });
   }, []);
 
-  const fmt = v => v === null || v === undefined ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
+  // Fetch DB funding averages when venue or markets change (for 7d/30d periods)
+  useEffect(() => {
+    if (!markets || !markets.length) return;
+    const coins = [...new Set(markets.map(m => m.coin).filter(Boolean))];
+    if (!coins.length) return;
+    setFundingLoading(true);
+    fetch(`/api/funding/batch?venue=${selectedVenue}&coins=${coins.join(",")}&days=31`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`API ${r.status}`)))
+      .then(data => {
+        const avgs = {};
+        data.forEach(row => { avgs[row.coin] = { apr7: row.apr7, apr30: row.apr30 }; });
+        setFundingAvgs(avgs);
+        setFundingLoading(false);
+      })
+      .catch(() => setFundingLoading(false));
+  }, [markets, selectedVenue]);
+
+  // Normalize to % (Boros returns decimals like 0.035 = 3.5%)
+  const toPercent = v => (v === null || v === undefined) ? null : v * 100;
+
+  const fmtPct = v => {
+    if (v === null || v === undefined) return "—";
+    return (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+  };
   const fmtDate = ts => {
     if (!ts) return "—";
     const d = new Date(ts * 1000);
     return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
   };
-  const benefitColor = v => {
+  const yuColor = v => {
     if (v === null || v === undefined) return "var(--text-dim)";
-    const pct = v * 100;
-    if (pct > 5)  return "#00d4aa";
-    if (pct > 0)  return "#7fdfcc";
-    if (pct > -5) return "#ff8fa0";
+    if (v > 5)  return "#00d4aa";
+    if (v > 0)  return "#7fdfcc";
+    if (v > -5) return "#ff8fa0";
     return "#ff4d6d";
   };
 
@@ -1609,10 +1636,23 @@ function BorosPage() {
     textAlign: align, borderBottom: "1px solid var(--border-dim)", whiteSpace: "nowrap",
   });
 
-  const withBenefit = markets
-    ? markets.map(m => ({ ...m, benefit: m.underlyingApr !== null && m.impliedApr !== null ? m.underlyingApr - m.impliedApr : null }))
-    : [];
-  const sorted = withBenefit.sort((a, b) => {
+  // Build enriched rows with computed columns
+  const getUnderlying = (m) => {
+    const coin = m.coin;
+    if (period === "7d")  return fundingAvgs[coin]?.apr7  ?? null;
+    if (period === "30d") return fundingAvgs[coin]?.apr30 ?? null;
+    return toPercent(m.underlyingApr);
+  };
+
+  const withComputed = (markets ?? []).map(m => {
+    const implied    = toPercent(m.impliedApr);
+    const underlying = getUnderlying(m);
+    const longYU  = (underlying !== null && implied !== null) ? underlying - implied : null;
+    const shortYU = (underlying !== null && implied !== null) ? implied - underlying : null;
+    return { ...m, implied, underlying, longYU, shortYU };
+  });
+
+  const sorted = [...withComputed].sort((a, b) => {
     const va = a[sortCol] ?? -9999;
     const vb = b[sortCol] ?? -9999;
     if (typeof va === "string") return sortDir * va.localeCompare(vb);
@@ -1623,6 +1663,16 @@ function BorosPage() {
     if (sortCol === col) setSortDir(d => -d);
     else { setSortCol(col); setSortDir(-1); }
   };
+
+  const venueObj = VENUES.find(v => v.id === selectedVenue) ?? VENUES[0];
+  const underlyingLabel = period === "live" ? "UNDERLYING APR" : period === "7d" ? `UNDERLYING 7D AVG (${venueObj.label})` : `UNDERLYING 30D AVG (${venueObj.label})`;
+  const impliedLabel = period === "live" ? "IMPLIED APR" : period === "7d" ? "IMPLIED APR (live)" : "IMPLIED APR (live)";
+
+  const PERIOD_BTNS = [
+    { id: "live", label: "Live" },
+    { id: "7d",   label: "7d"  },
+    { id: "30d",  label: "30d" },
+  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
@@ -1640,14 +1690,61 @@ function BorosPage() {
         <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 6, fontSize: 11 }}>How to hedge funding rate exposure</div>
         <div>
           <span style={{ color: "#00d4aa", fontWeight: 600 }}>LONG YU on Boros</span>
-          {" "}→ pay fixed Implied APR, receive floating Underlying APR
+          {" "}→ pay fixed Implied APR, receive floating Underlying APR · benefit = Underlying − Implied
         </div>
         <div>
           <span style={{ color: "#ff4d6d", fontWeight: 600 }}>SHORT YU on Boros</span>
-          {" "}→ receive fixed Implied APR, pay floating Underlying APR
+          {" "}→ receive fixed Implied APR, pay floating Underlying APR · benefit = Implied − Underlying
         </div>
-        <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 9 }}>
-          Hedge benefit = Underlying APR − Implied APR · positive = cost of hedge is below current funding (profitable hedge)
+      </div>
+
+      {/* Controls: venue + period */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+        {/* Venue selector */}
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em", marginBottom: 6 }}>UNDERLYING VENUE</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {VENUES.map(v => {
+              const active = selectedVenue === v.id;
+              return (
+                <button key={v.id} onClick={() => setSelectedVenue(v.id)}
+                  style={{
+                    padding: "5px 10px", fontSize: 10, fontWeight: active ? 600 : 400,
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    background: active ? v.color + "22" : "transparent",
+                    border: `1px solid ${active ? v.color : "var(--border)"}`,
+                    borderRadius: 6, color: active ? v.color : "var(--text-dim)",
+                    cursor: "pointer", transition: "all 0.15s",
+                  }}>
+                  {v.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Period selector */}
+        <div>
+          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em", marginBottom: 6 }}>PERIOD</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {PERIOD_BTNS.map(p => {
+              const active = period === p.id;
+              return (
+                <button key={p.id} onClick={() => setPeriod(p.id)}
+                  style={{
+                    padding: "5px 14px", fontSize: 10, fontWeight: active ? 600 : 400,
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    background: active ? "#4a9eff22" : "transparent",
+                    border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
+                    borderRadius: 6, color: active ? "#4a9eff" : "var(--text-dim)",
+                    cursor: "pointer", transition: "all 0.15s",
+                  }}>
+                  {p.label}
+                </button>
+              );
+            })}
+            {fundingLoading && <span style={{ fontSize: 9, color: "var(--text-muted)", alignSelf: "center", marginLeft: 6 }}>loading…</span>}
+          </div>
         </div>
       </div>
 
@@ -1681,35 +1778,34 @@ function BorosPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
               <thead>
                 <tr style={{ background: "var(--bg-alt)" }}>
-                  <th style={thStyle("coin")}     onClick={() => handleSort("coin")}>ASSET {sortCol === "coin"     ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("platform")} onClick={() => handleSort("platform")}>PLATFORM {sortCol === "platform" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("maturity")} onClick={() => handleSort("maturity")}>MATURITY {sortCol === "maturity" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("underlyingApr")} onClick={() => handleSort("underlyingApr")}>UNDERLYING APR {sortCol === "underlyingApr" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("impliedApr")} onClick={() => handleSort("impliedApr")}>IMPLIED APR {sortCol === "impliedApr" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("benefit")} onClick={() => handleSort("benefit")}>HEDGE BENEFIT {sortCol === "benefit" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("coin")}       onClick={() => handleSort("coin")}>ASSET {sortCol === "coin"       ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("platform")}   onClick={() => handleSort("platform")}>PLATFORM {sortCol === "platform"   ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("maturity")}   onClick={() => handleSort("maturity")}>MATURITY {sortCol === "maturity"   ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("implied")}    onClick={() => handleSort("implied")}>{impliedLabel} {sortCol === "implied"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("underlying")} onClick={() => handleSort("underlying")}>{underlyingLabel} {sortCol === "underlying" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("longYU")}     onClick={() => handleSort("longYU")}>LONG YU {sortCol === "longYU"     ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("shortYU")}    onClick={() => handleSort("shortYU")}>SHORT YU {sortCol === "shortYU"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
                   <th style={thStyle("status")}>STATUS</th>
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((m, i) => {
-                  const benefit = m.benefit;
-                  return (
-                    <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                      <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>{m.coin || m.name}</td>
-                      <td style={{ ...tdStyle("left"), color: "var(--text-dim)" }}>{m.platform || "—"}</td>
-                      <td style={tdStyle()}>{fmtDate(m.maturity)}</td>
-                      <td style={{ ...tdStyle(), color: aprColor(m.underlyingApr) }}>{fmt(m.underlyingApr)}</td>
-                      <td style={{ ...tdStyle(), color: aprColor(m.impliedApr) }}>{fmt(m.impliedApr)}</td>
-                      <td style={{ ...tdStyle(), color: benefitColor(benefit), fontWeight: 600 }}>{fmt(benefit)}</td>
-                      <td style={{ ...tdStyle(), color: "var(--text-muted)", fontSize: 9, letterSpacing: "0.06em" }}>{m.status}</td>
-                    </tr>
-                  );
-                })}
+                {sorted.map((m, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                    <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>{m.coin || m.name}</td>
+                    <td style={{ ...tdStyle("left"), color: "var(--text-dim)" }}>{m.platform || "—"}</td>
+                    <td style={tdStyle()}>{fmtDate(m.maturity)}</td>
+                    <td style={{ ...tdStyle(), color: aprColor(m.implied) }}>{fmtPct(m.implied)}</td>
+                    <td style={{ ...tdStyle(), color: aprColor(m.underlying) }}>{fmtPct(m.underlying)}</td>
+                    <td style={{ ...tdStyle(), color: yuColor(m.longYU),  fontWeight: 600 }}>{fmtPct(m.longYU)}</td>
+                    <td style={{ ...tdStyle(), color: yuColor(m.shortYU), fontWeight: 600 }}>{fmtPct(m.shortYU)}</td>
+                    <td style={{ ...tdStyle(), color: "var(--text-muted)", fontSize: 9, letterSpacing: "0.06em" }}>{m.status}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
           <div style={{ padding: "8px 12px", fontSize: 9, color: "var(--text-muted)", borderTop: "1px solid var(--border-dim)", display: "flex", justifyContent: "space-between" }}>
-            <span>{sorted.length} active market{sorted.length !== 1 ? "s" : ""}</span>
+            <span>{sorted.length} active market{sorted.length !== 1 ? "s" : ""} · underlying: {venueObj.label}{period !== "live" ? ` ${period} avg` : " live"}</span>
             <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer"
               style={{ color: "#a855f7", textDecoration: "none" }}>↗ boros.pendle.finance</a>
           </div>
