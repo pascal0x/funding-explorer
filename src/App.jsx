@@ -1559,7 +1559,7 @@ function BorosPage() {
       .catch(e  => { setError(e.message); setLoading(false); });
   }, []);
 
-  const fmt = v => v === null || v === undefined ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+  const fmt = v => v === null || v === undefined ? "—" : (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
   const fmtDate = ts => {
     if (!ts) return "—";
     const d = new Date(ts * 1000);
@@ -1567,9 +1567,10 @@ function BorosPage() {
   };
   const benefitColor = v => {
     if (v === null || v === undefined) return "var(--text-dim)";
-    if (v > 5)  return "#00d4aa";
-    if (v > 0)  return "#7fdfcc";
-    if (v > -5) return "#ff8fa0";
+    const pct = v * 100;
+    if (pct > 5)  return "#00d4aa";
+    if (pct > 0)  return "#7fdfcc";
+    if (pct > -5) return "#ff8fa0";
     return "#ff4d6d";
   };
 
@@ -1585,12 +1586,15 @@ function BorosPage() {
     textAlign: align, borderBottom: "1px solid var(--border-dim)", whiteSpace: "nowrap",
   });
 
-  const sorted = markets ? [...markets].sort((a, b) => {
+  const withBenefit = markets
+    ? markets.map(m => ({ ...m, benefit: m.underlyingApr !== null && m.impliedApr !== null ? m.underlyingApr - m.impliedApr : null }))
+    : [];
+  const sorted = withBenefit.sort((a, b) => {
     const va = a[sortCol] ?? -9999;
     const vb = b[sortCol] ?? -9999;
     if (typeof va === "string") return sortDir * va.localeCompare(vb);
     return sortDir * (va - vb);
-  }) : [];
+  });
 
   const handleSort = col => {
     if (sortCol === col) setSortDir(d => -d);
@@ -1665,8 +1669,7 @@ function BorosPage() {
               </thead>
               <tbody>
                 {sorted.map((m, i) => {
-                  const benefit = (m.underlyingApr !== null && m.impliedApr !== null)
-                    ? m.underlyingApr - m.impliedApr : null;
+                  const benefit = m.benefit;
                   return (
                     <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
                       <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>{m.coin || m.name}</td>
