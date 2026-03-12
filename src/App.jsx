@@ -1510,6 +1510,58 @@ async function fetchBorosMarkets() {
 }
 
 function BorosPage() {
+  const [markets, setMarkets] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+  const [sortCol, setSortCol] = useState("benefit");
+  const [sortDir, setSortDir] = useState(-1);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchBorosMarkets()
+      .then(data => { setMarkets(data); setLoading(false); })
+      .catch(e  => { setError(e.message); setLoading(false); });
+  }, []);
+
+  const fmt = v => v === null || v === undefined ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+  const fmtDate = ts => {
+    if (!ts) return "—";
+    const d = new Date(ts * 1000);
+    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+  };
+  const benefitColor = v => {
+    if (v === null || v === undefined) return "var(--text-dim)";
+    if (v > 5)  return "#00d4aa";
+    if (v > 0)  return "#7fdfcc";
+    if (v > -5) return "#ff8fa0";
+    return "#ff4d6d";
+  };
+
+  const thStyle = (col) => ({
+    padding: "8px 10px", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em",
+    color: sortCol === col ? "#4a9eff" : "var(--text-dim)",
+    textAlign: col === "coin" || col === "platform" ? "left" : "right",
+    cursor: "pointer", userSelect: "none", whiteSpace: "nowrap",
+    borderBottom: "1px solid var(--border)",
+  });
+  const tdStyle = (align = "right") => ({
+    padding: "7px 10px", fontSize: 10, color: "var(--text)",
+    textAlign: align, borderBottom: "1px solid var(--border-dim)", whiteSpace: "nowrap",
+  });
+
+  const sorted = markets ? [...markets].sort((a, b) => {
+    const va = a[sortCol] ?? -9999;
+    const vb = b[sortCol] ?? -9999;
+    if (typeof va === "string") return sortDir * va.localeCompare(vb);
+    return sortDir * (va - vb);
+  }) : [];
+
+  const handleSort = col => {
+    if (sortCol === col) setSortDir(d => -d);
+    else { setSortCol(col); setSortDir(-1); }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       <div style={{ marginBottom: 12 }}>
@@ -1537,30 +1589,71 @@ function BorosPage() {
         </div>
       </div>
 
-      {/* Coming soon banner */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid #a855f744", borderRadius: 10, padding: "28px 24px", textAlign: "center" }}>
-        <div style={{ fontSize: 11, color: "#a855f7", fontWeight: 600, letterSpacing: "0.12em", marginBottom: 10 }}>
-          COMING SOON · NEEDS BACKEND
+      {/* Data area */}
+      {loading && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "32px 24px", textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>
+          Loading Boros markets…
         </div>
-        <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.8, marginBottom: 16 }}>
-          The Boros API restricts direct browser access — a backend proxy is required.<br />
-          Live market data will be enabled once the server is set up.
+      )}
+
+      {!loading && error && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid #ff4d6d44", borderRadius: 10, padding: "24px", textAlign: "center" }}>
+          <div style={{ color: "#ff4d6d", fontSize: 11, fontWeight: 600, marginBottom: 8 }}>Failed to load Boros data</div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10, marginBottom: 14 }}>{error}</div>
+          <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer"
+            style={{ display: "inline-block", background: "#a855f722", border: "1px solid #a855f7", borderRadius: 6, color: "#a855f7", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, padding: "8px 20px", textDecoration: "none", letterSpacing: "0.08em" }}>
+            ↗ Open boros.pendle.finance
+          </a>
         </div>
-        <a
-          href="https://boros.pendle.finance"
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            display: "inline-block",
-            background: "#a855f722", border: "1px solid #a855f7",
-            borderRadius: 6, color: "#a855f7",
-            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
-            padding: "8px 20px", textDecoration: "none", letterSpacing: "0.08em",
-          }}
-        >
-          ↗ Open boros.pendle.finance
-        </a>
-      </div>
+      )}
+
+      {!loading && !error && sorted.length === 0 && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "32px 24px", textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>
+          No active markets found.
+        </div>
+      )}
+
+      {!loading && !error && sorted.length > 0 && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+              <thead>
+                <tr style={{ background: "var(--bg-alt)" }}>
+                  <th style={thStyle("coin")}     onClick={() => handleSort("coin")}>ASSET {sortCol === "coin"     ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("platform")} onClick={() => handleSort("platform")}>PLATFORM {sortCol === "platform" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("maturity")} onClick={() => handleSort("maturity")}>MATURITY {sortCol === "maturity" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("underlyingApr")} onClick={() => handleSort("underlyingApr")}>UNDERLYING APR {sortCol === "underlyingApr" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("impliedApr")} onClick={() => handleSort("impliedApr")}>IMPLIED APR {sortCol === "impliedApr" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("benefit")} onClick={() => handleSort("benefit")}>HEDGE BENEFIT {sortCol === "benefit" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle("status")}>STATUS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((m, i) => {
+                  const benefit = (m.underlyingApr !== null && m.impliedApr !== null)
+                    ? m.underlyingApr - m.impliedApr : null;
+                  return (
+                    <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
+                      <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>{m.coin || m.name}</td>
+                      <td style={{ ...tdStyle("left"), color: "var(--text-dim)" }}>{m.platform || "—"}</td>
+                      <td style={tdStyle()}>{fmtDate(m.maturity)}</td>
+                      <td style={{ ...tdStyle(), color: aprColor(m.underlyingApr) }}>{fmt(m.underlyingApr)}</td>
+                      <td style={{ ...tdStyle(), color: aprColor(m.impliedApr) }}>{fmt(m.impliedApr)}</td>
+                      <td style={{ ...tdStyle(), color: benefitColor(benefit), fontWeight: 600 }}>{fmt(benefit)}</td>
+                      <td style={{ ...tdStyle(), color: "var(--text-muted)", fontSize: 9, letterSpacing: "0.06em" }}>{m.status}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ padding: "8px 12px", fontSize: 9, color: "var(--text-muted)", borderTop: "1px solid var(--border-dim)", display: "flex", justifyContent: "space-between" }}>
+            <span>{sorted.length} active market{sorted.length !== 1 ? "s" : ""}</span>
+            <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer"
+              style={{ color: "#a855f7", textDecoration: "none" }}>↗ boros.pendle.finance</a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
