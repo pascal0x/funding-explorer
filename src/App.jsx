@@ -467,6 +467,34 @@ async function fetchLighterLiveFunding(coin) {
   } catch { return null; }
 }
 
+// ── Backend API wrapper ───────────────────────────────────────────────────────
+// In production, /api is proxied to the Node.js backend (nginx).
+// In dev without backend, falls back to direct exchange calls.
+async function apiFetchHistory(venue, coin, days, hlDexName = null) {
+  // HIP-3 named dexes are HL-only and not stored in the backend DB
+  if (venue === "hl" && hlDexName) {
+    return fetchAllFunding(coin, days, hlDexName);
+  }
+  try {
+    const res = await fetch(`/api/funding?venue=${venue}&coin=${encodeURIComponent(coin)}&days=${days}`);
+    if (!res.ok) throw new Error(`API ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) return data;
+    // Empty response from backend — fall through to direct fetch
+  } catch {
+    // Backend unavailable (dev mode) — fall through to direct fetch
+  }
+  // Fallback: direct exchange call
+  if      (venue === "hl")  return fetchAllFunding(coin, days);
+  else if (venue === "bn")  return fetchBinanceFundingHistory(coin, days);
+  else if (venue === "by")  return fetchBybitFundingHistory(coin, days);
+  else if (venue === "okx") return fetchOkxFundingHistory(coin, days);
+  else if (venue === "dy")  return fetchDydxFundingHistory(coin, days);
+  else if (venue === "lt")  return fetchLighterFundingHistory(coin, days);
+  else if (venue === "ad")  return fetchAsterdexFundingHistory(coin, days);
+  return [];
+}
+
 // ── Dynamic asset discovery ───────────────────────────────────────────────────
 let _assetsLoaded = false;
 
@@ -818,13 +846,7 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
     setError(null); setData([]); setStats(null); setLive(null);
     try {
       let raw = [];
-      if      (v === "hl")  raw = await fetchAllFunding(c, days, d);
-      else if (v === "bn")  raw = await fetchBinanceFundingHistory(c, days);
-      else if (v === "by")  raw = await fetchBybitFundingHistory(c, days);
-      else if (v === "okx") raw = await fetchOkxFundingHistory(c, days);
-      else if (v === "dy")  raw = await fetchDydxFundingHistory(c, days);
-      else if (v === "lt")  raw = await fetchLighterFundingHistory(c, days);
-      else if (v === "ad")  raw = await fetchAsterdexFundingHistory(c, days);
+      raw = await apiFetchHistory(v, c, days, v === "hl" ? d : null);
 
       if (!raw.length) throw new Error(`No data for ${c} on ${VENUES.find(x => x.id === v)?.label}`);
 
@@ -1186,11 +1208,7 @@ function ArbitragePage({ onNavigate }) {
       const batchRes = await Promise.all(batch.map(async (coin) => {
         try {
           let d90 = [];
-          if (vid === "hl")  d90 = await fetchAllFunding(coin, 90).catch(() => []);
-          else if (vid === "bn")  d90 = await fetchBinanceFundingHistory(coin, 91).catch(() => []);
-          else if (vid === "by")  d90 = await fetchBybitFundingHistory(coin, 91).catch(() => []);
-          else if (vid === "okx") d90 = await fetchOkxFundingHistory(coin, 91).catch(() => []);
-          else if (vid === "dy")  d90 = await fetchDydxFundingHistory(coin, 91).catch(() => []);
+          d90 = await apiFetchHistory(vid, coin, 91).catch(() => []);
           const d30 = d90.filter(d => d.time >= now - D30);
           const d7  = d30.filter(d => d.time >= now - D7);
           return { coin, apr7: venueAvgAPR(d7, vid), apr30: venueAvgAPR(d30, vid), apr90: venueAvgAPR(d90, vid) };
@@ -1710,10 +1728,7 @@ function ComparePage({ onNavigate }) {
       const batchRes = await Promise.all(batch.map(async (coin) => {
         try {
           let d90 = [];
-          if (vid === "hl") d90 = await fetchWithRetry(() => fetchAllFunding(coin, 90));
-          else if (vid === "bn") d90 = await fetchWithRetry(() => fetchBinanceFundingHistory(coin, 91));
-          else if (vid === "by") d90 = await fetchWithRetry(() => fetchBybitFundingHistory(coin, 91));
-          else if (vid === "ad") d90 = await fetchWithRetry(() => fetchAsterdexFundingHistory(coin, 91));
+          d90 = await fetchWithRetry(() => apiFetchHistory(vid, coin, 91));
 
           const now = Date.now();
           const d30 = d90.filter(d => d.time >= now - 30*24*3600*1000);
@@ -2054,13 +2069,7 @@ function TrendPage() {
       // Fetch enough data to compute largest MA window
       const days = m === "daily" ? 92 : 32;   // +2 days buffer
       let raw = [];
-      if      (v === "hl")  raw = await fetchAllFunding(c, days);
-      else if (v === "bn")  raw = await fetchBinanceFundingHistory(c, days);
-      else if (v === "by")  raw = await fetchBybitFundingHistory(c, days);
-      else if (v === "okx") raw = await fetchOkxFundingHistory(c, days);
-      else if (v === "dy")  raw = await fetchDydxFundingHistory(c, days);
-      else if (v === "lt")  raw = await fetchLighterFundingHistory(c, days);
-      else if (v === "ad")  raw = await fetchAsterdexFundingHistory(c, days);
+      raw = await apiFetchHistory(v, c, days);
 
       if (!raw.length) throw new Error(`No data for ${c} on ${VENUES.find(x => x.id === v)?.label}`);
 

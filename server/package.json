@@ -1,0 +1,14 @@
+{
+  "name": "funding-explorer-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "node-cron": "^3.0.3"
+  }
+}
