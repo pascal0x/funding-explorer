@@ -1336,7 +1336,7 @@ function ArbitragePage({ onNavigate }) {
         </div>
         {/* Leverage row */}
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Leverage</span>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 60, flexShrink: 0 }}>Leverage</span>
           {[1, 3, 6].map(l => (
             <button key={l} onClick={() => setLeverage(l)} style={btnStyle(leverage === l)}>{l}×</button>
           ))}
