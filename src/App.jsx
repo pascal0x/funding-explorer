@@ -1162,6 +1162,8 @@ function ArbitragePage({ onNavigate }) {
   const [sortDir, setSortDir] = useState(-1);
   const [leverage, setLeverage] = useState(1);
   const [period, setPeriod] = useState("30");
+  const [borosMarkets, setBorosMarkets] = useState([]);
+  const [borosError, setBorosError] = useState(null);
   const abortRefs = useRef({});
   const loadedRef = useRef({});
 
@@ -1208,6 +1210,9 @@ function ArbitragePage({ onNavigate }) {
 
   useEffect(() => {
     ["hl", "bn", "by"].forEach(vid => loadVenue(vid));
+    fetchBorosMarkets()
+      .then(setBorosMarkets)
+      .catch(e => setBorosError(e.message));
   }, [loadVenue]);
 
   const toggleVenue = (vid) => {
@@ -1346,6 +1351,53 @@ function ArbitragePage({ onNavigate }) {
         </div>
       </div>
 
+      {/* Boros implied rates card */}
+      {(borosMarkets.length > 0 || borosError) && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 9, color: "#a855f7", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>Boros</span>
+            <span style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.06em" }}>· Pendle implied funding rates</span>
+          </div>
+          {borosError ? (
+            <div style={{ fontSize: 10, color: "#ff4d6d", letterSpacing: "0.05em" }}>Failed to load boros data — {borosError}</div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {borosMarkets.map((m, i) => {
+                const markPct  = m.markApr  !== null ? (m.markApr  * 100).toFixed(2) : null;
+                const floatPct = m.floatingApr !== null ? (m.floatingApr * 100).toFixed(2) : null;
+                const matDate  = new Date(m.maturity * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+                const markColor = m.markApr > 0 ? "#00d4aa" : m.markApr < 0 ? "#ff4d6d" : "var(--text-dim)";
+                return (
+                  <div key={i} style={{ background: "var(--bg-alt)", border: "1px solid var(--border)", borderRadius: 7, padding: "7px 12px", minWidth: 130 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{m.coin}</span>
+                      <span style={{ fontSize: 8, color: "var(--text-muted)", letterSpacing: "0.05em" }}>{m.platform}</span>
+                    </div>
+                    <div style={{ fontSize: 8, color: "var(--text-label)", marginBottom: 5, letterSpacing: "0.05em" }}>exp {matDate}</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ fontSize: 8, color: "var(--text-muted)", letterSpacing: "0.06em" }}>IMPLIED</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: markColor, fontFamily: "'IBM Plex Mono', monospace" }}>
+                          {markPct !== null ? `${markPct}%` : "—"}
+                        </span>
+                      </div>
+                      {floatPct !== null && (
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                          <span style={{ fontSize: 8, color: "var(--text-muted)", letterSpacing: "0.06em" }}>FLOAT</span>
+                          <span style={{ fontSize: 10, color: parseFloat(floatPct) >= 0 ? "#7fdfcc" : "#ff8fa0", fontFamily: "'IBM Plex Mono', monospace" }}>
+                            {parseFloat(floatPct) >= 0 ? "+" : ""}{floatPct}%
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Progress bars for loading venues */}
       {[...loadingVenues].map(vid => {
         const prog = progressMap[vid];
@@ -1456,14 +1508,42 @@ function ArbitragePage({ onNavigate }) {
 }
 
 // ── BOROS / HEDGE ─────────────────────────────────────────────────────────────
+const BOROS_BASE = "https://api.boros.finance/core";
+
+// Fetch all active Boros markets with full APR data (list + per-market detail)
 async function fetchBorosMarkets() {
-  const res = await fetch("https://api.boros.finance/core/v1/markets", {
+  const listRes = await fetch(`${BOROS_BASE}/v1/markets?limit=100&isWhitelisted=true`, {
     headers: { "Accept": "application/json" },
   });
-  if (!res.ok) throw new Error(`Boros API ${res.status}`);
-  const json = await res.json();
-  // Handle possible response shapes: { markets: [...] } or { data: [...] } or [...]
-  return Array.isArray(json) ? json : (json.markets ?? json.data ?? []);
+  if (!listRes.ok) throw new Error(`Boros API ${listRes.status}`);
+  const listJson = await listRes.json();
+  const list = listJson.results ?? (Array.isArray(listJson) ? listJson : []);
+
+  const now = Date.now() / 1000;
+  const active = list.filter(m => (m.imData?.maturity ?? 0) > now);
+  if (!active.length) return [];
+
+  const details = await Promise.all(active.map(m =>
+    fetch(`${BOROS_BASE}/v1/markets/${m.marketId}`, { headers: { "Accept": "application/json" } })
+      .then(r => r.ok ? r.json() : null).catch(() => null)
+  ));
+
+  return details.filter(Boolean).map(m => {
+    const raw = m.metadata?.name ?? "";
+    const coin = raw.replace(/USDT$/, "").replace(/USD$/, "").replace(/USDC$/, "");
+    return {
+      name:          m.imData?.name ?? raw,
+      coin,
+      platform:      m.metadata?.platformName ?? "",
+      maturity:      m.imData?.maturity ?? 0,
+      markApr:       m.data?.markApr     ?? null,   // decimal (0.07 = 7%)
+      impliedApr:    m.data?.markApr     ?? null,   // alias for BorosPage columns
+      underlyingApr: m.data?.floatingApr ?? null,   // current floating rate
+      floatingApr:   m.data?.floatingApr ?? null,
+      midApr:        m.data?.midApr      ?? null,
+      status:        m.data?.state       ?? "—",
+    };
+  }).sort((a, b) => a.maturity - b.maturity);
 }
 
 function BorosPage() {
