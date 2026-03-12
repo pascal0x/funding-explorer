@@ -1216,8 +1216,8 @@ function ArbitragePage({ onNavigate }) {
     const now = Date.now();
     const D7  = 7  * 24 * 3600 * 1000;
     const D30 = 30 * 24 * 3600 * 1000;
+    const CONCURRENCY = 20;
     const out = [];
-    const CONCURRENCY = 2;
 
     for (let i = 0; i < assets.length; i += CONCURRENCY) {
       if (abortRefs.current[vid]) break;
@@ -1236,7 +1236,6 @@ function ArbitragePage({ onNavigate }) {
       out.push(...batchRes);
       setProgressMap(prev => ({ ...prev, [vid]: { ...prev[vid], done: Math.min(assets.length, i + CONCURRENCY) } }));
       setVenueData(prev => ({ ...prev, [vid]: [...out] }));
-      if (i + CONCURRENCY < assets.length) await new Promise(r => setTimeout(r, 150));
     }
     setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
   }, []);
@@ -1734,7 +1733,7 @@ function ComparePage({ onNavigate }) {
       ? ALL_ASSETS
       : (_dynVenueAssets[vid]?.filter(c => hlCryptoSet.has(c)) ?? ARBI_ASSETS);
     const freq = VENUE_FREQ[vid];
-    const CONCURRENCY = 2;
+    const CONCURRENCY = 20;
 
     setLoadingVenues(prev => new Set([...prev, vid]));
     setProgressMap(prev => ({ ...prev, [vid]: { done: 0, total: assets.length } }));
@@ -1757,7 +1756,6 @@ function ComparePage({ onNavigate }) {
       out.push(...batchRes);
       setProgressMap(prev => ({ ...prev, [vid]: { ...prev[vid], done: Math.min(assets.length, i + CONCURRENCY) } }));
       setVenueData(prev => ({ ...prev, [vid]: [...out] }));
-      if (i + CONCURRENCY < assets.length) await new Promise(r => setTimeout(r, 150));
     }
 
     setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
