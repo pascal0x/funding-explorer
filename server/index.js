@@ -142,6 +142,20 @@ const BOROS_BASE_SRV = "https://api.boros.finance/core";
 let _borosCache = null;
 let _borosCacheTime = 0;
 
+// Rolling 7-day implied APR snapshots: { [marketKey]: [{ts, impliedApr}] }
+const _borosImpliedHistory = {};
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+const COLLATERALS_SRV = ["USDT", "USDC", "USD", "BTC", "ETH", "SOL", "USDE", "DAI"];
+const extractCoinCollateral = (raw) => {
+  for (const col of COLLATERALS_SRV) {
+    if (raw.endsWith(col) && raw.length > col.length) {
+      return { coin: raw.slice(0, -col.length), collateral: col };
+    }
+  }
+  return { coin: raw, collateral: null };
+};
+
 app.get("/api/boros", async (req, res) => {
   try {
     // Cache 5 minutes
@@ -162,28 +176,31 @@ app.get("/api/boros", async (req, res) => {
         .catch(() => null)
     ));
 
-    const COLLATERALS = ["USDT", "USDC", "USD", "BTC", "ETH", "SOL", "USDE", "DAI"];
-    const extractCoinCollateral = (raw) => {
-      for (const col of COLLATERALS) {
-        if (raw.endsWith(col) && raw.length > col.length) {
-          return { coin: raw.slice(0, -col.length), collateral: col };
-        }
-      }
-      return { coin: raw, collateral: null };
-    };
-
+    const nowMs = Date.now();
     const markets = details.filter(Boolean).map(m => {
       const raw = m.metadata?.name ?? "";
       const { coin, collateral } = extractCoinCollateral(raw);
+      const marketKey = `${coin}-${collateral ?? "?"}-${m.imData?.maturity ?? 0}`;
+      const impliedApr = m.data?.impliedApr ?? m.data?.markApr ?? null;
+
+      // Accumulate snapshot for 7d avg
+      if (impliedApr !== null) {
+        if (!_borosImpliedHistory[marketKey]) _borosImpliedHistory[marketKey] = [];
+        _borosImpliedHistory[marketKey].push({ ts: nowMs, impliedApr });
+        // Prune older than 7 days
+        const cutoff = nowMs - SEVEN_DAYS_MS;
+        _borosImpliedHistory[marketKey] = _borosImpliedHistory[marketKey].filter(s => s.ts >= cutoff);
+      }
+
       return {
         name:          m.imData?.name ?? raw,
         coin,
         collateral,
+        marketKey,
         platform:      m.metadata?.platformName ?? "",
         maturity:      m.imData?.maturity ?? 0,
-        impliedApr:    m.data?.impliedApr    ?? m.data?.markApr     ?? null,
+        impliedApr,
         underlyingApr: m.data?.underlyingApr ?? m.data?.floatingApr ?? null,
-        status:        m.data?.state ?? m.data?.marketStatus       ?? "—",
       };
     }).sort((a, b) => a.maturity - b.maturity);
 
@@ -194,6 +211,20 @@ app.get("/api/boros", async (req, res) => {
     console.error("[api/boros]", e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── GET /api/boros/implied-avg ─────────────────────────────────────────────────
+// Returns { [marketKey]: impliedApr7dAvg } from accumulated snapshots
+app.get("/api/boros/implied-avg", (req, res) => {
+  const result = {};
+  const cutoff = Date.now() - SEVEN_DAYS_MS;
+  for (const [key, snaps] of Object.entries(_borosImpliedHistory)) {
+    const recent = snaps.filter(s => s.ts >= cutoff);
+    if (recent.length) {
+      result[key] = recent.reduce((sum, s) => sum + s.impliedApr, 0) / recent.length;
+    }
+  }
+  res.json(result);
 });
 
 // ── GET /api/status ───────────────────────────────────────────────────────────

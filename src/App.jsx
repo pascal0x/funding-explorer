@@ -1575,6 +1575,7 @@ function BorosPage() {
   const [period, setPeriod]             = useState("live");      // "live" | "7d" | "30d"
   const [selectedVenue, setSelectedVenue] = useState("hl");
   const [fundingAvgs, setFundingAvgs]   = useState({});          // { coin: { apr7, apr30 } }
+  const [impliedAvgs, setImpliedAvgs]   = useState({});          // { marketKey: impliedApr7dAvg }
   const [fundingLoading, setFundingLoading] = useState(false);
 
   // Fetch Boros markets once
@@ -1587,18 +1588,21 @@ function BorosPage() {
       .catch(e  => { setError(e.message); setLoading(false); });
   }, []);
 
-  // Fetch DB funding averages when venue or markets change (for 7d/30d periods)
+  // Fetch DB funding averages + implied APR averages when venue or markets change
   useEffect(() => {
     if (!markets || !markets.length) return;
     const coins = [...new Set(markets.map(m => m.coin).filter(Boolean))];
     if (!coins.length) return;
     setFundingLoading(true);
-    fetch(`/api/funding/batch?venue=${selectedVenue}&coins=${coins.join(",")}&days=31`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(`API ${r.status}`)))
-      .then(data => {
+    Promise.all([
+      fetch(`/api/funding/batch?venue=${selectedVenue}&coins=${coins.join(",")}&days=31`)
+        .then(r => r.ok ? r.json() : Promise.reject(new Error(`API ${r.status}`))),
+      fetch("/api/boros/implied-avg").then(r => r.ok ? r.json() : {}),
+    ]).then(([fundData, implData]) => {
         const avgs = {};
-        data.forEach(row => { avgs[row.coin] = { apr7: row.apr7, apr30: row.apr30 }; });
+        fundData.forEach(row => { avgs[row.coin] = { apr7: row.apr7, apr30: row.apr30 }; });
         setFundingAvgs(avgs);
+        setImpliedAvgs(implData);
         setFundingLoading(false);
       })
       .catch(() => setFundingLoading(false));
@@ -1627,7 +1631,7 @@ function BorosPage() {
   const thStyle = (col) => ({
     padding: "8px 10px", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em",
     color: sortCol === col ? "#4a9eff" : "var(--text-dim)",
-    textAlign: col === "coin" || col === "platform" ? "left" : "right",
+    textAlign: col === "coin" ? "left" : "right",
     cursor: "pointer", userSelect: "none", whiteSpace: "nowrap",
     borderBottom: "1px solid var(--border)",
   });
@@ -1635,6 +1639,9 @@ function BorosPage() {
     padding: "7px 10px", fontSize: 10, color: "var(--text)",
     textAlign: align, borderBottom: "1px solid var(--border-dim)", whiteSpace: "nowrap",
   });
+
+  // Platform label → venue ID mapping for filtering
+  const platformForVenue = { hl: "hyperliquid", bn: "binance", by: "bybit", okx: "okx", dy: "dydx", lt: "lighter", ad: "asterdex" };
 
   // Build enriched rows with computed columns
   const getUnderlying = (m) => {
@@ -1644,8 +1651,21 @@ function BorosPage() {
     return toPercent(m.underlyingApr);
   };
 
-  const withComputed = (markets ?? []).map(m => {
-    const implied    = toPercent(m.impliedApr);
+  const getImplied = (m) => {
+    if (period === "7d") {
+      const avg = impliedAvgs[m.marketKey];
+      return avg !== undefined ? avg * 100 : toPercent(m.impliedApr);
+    }
+    return toPercent(m.impliedApr);
+  };
+
+  const platformFilter = platformForVenue[selectedVenue] ?? "";
+  const filteredMarkets = (markets ?? []).filter(m =>
+    !platformFilter || m.platform.toLowerCase().includes(platformFilter)
+  );
+
+  const withComputed = filteredMarkets.map(m => {
+    const implied    = getImplied(m);
     const underlying = getUnderlying(m);
     const longYU  = (underlying !== null && implied !== null) ? underlying - implied : null;
     const shortYU = (underlying !== null && implied !== null) ? implied - underlying : null;
@@ -1665,8 +1685,8 @@ function BorosPage() {
   };
 
   const venueObj = VENUES.find(v => v.id === selectedVenue) ?? VENUES[0];
-  const underlyingLabel = period === "live" ? "UNDERLYING APR" : period === "7d" ? `UNDERLYING 7D AVG (${venueObj.label})` : `UNDERLYING 30D AVG (${venueObj.label})`;
-  const impliedLabel = period === "live" ? "IMPLIED APR" : period === "7d" ? "IMPLIED APR (live)" : "IMPLIED APR (live)";
+  const underlyingLabel = period === "live" ? "UNDERLYING APR" : period === "7d" ? `UNDERLYING 7D (${venueObj.label})` : `UNDERLYING 30D (${venueObj.label})`;
+  const impliedLabel = period === "live" ? "IMPLIED APR" : period === "7d" ? "IMPLIED 7D AVG" : "IMPLIED APR (live)";
 
   const PERIOD_BTNS = [
     { id: "live", label: "Live" },
@@ -1779,13 +1799,10 @@ function BorosPage() {
               <thead>
                 <tr style={{ background: "var(--bg-alt)" }}>
                   <th style={thStyle("coin")}       onClick={() => handleSort("coin")}>ASSET {sortCol === "coin"       ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("platform")}   onClick={() => handleSort("platform")}>PLATFORM {sortCol === "platform"   ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("maturity")}   onClick={() => handleSort("maturity")}>MATURITY {sortCol === "maturity"   ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
                   <th style={thStyle("implied")}    onClick={() => handleSort("implied")}>{impliedLabel} {sortCol === "implied"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
                   <th style={thStyle("underlying")} onClick={() => handleSort("underlying")}>{underlyingLabel} {sortCol === "underlying" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
                   <th style={thStyle("longYU")}     onClick={() => handleSort("longYU")}>LONG YU {sortCol === "longYU"     ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
                   <th style={thStyle("shortYU")}    onClick={() => handleSort("shortYU")}>SHORT YU {sortCol === "shortYU"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("status")}>STATUS</th>
                 </tr>
               </thead>
               <tbody>
@@ -1793,14 +1810,12 @@ function BorosPage() {
                   <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
                     <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>
                       {m.coin || m.name}{m.collateral ? <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>-{m.collateral}</span> : ""}
+                      {m.maturity ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: 9, marginLeft: 6 }}>{fmtDate(m.maturity)}</span> : ""}
                     </td>
-                    <td style={{ ...tdStyle("left"), color: "var(--text-dim)" }}>{m.platform || "—"}</td>
-                    <td style={tdStyle()}>{fmtDate(m.maturity)}</td>
                     <td style={{ ...tdStyle(), color: aprColor(m.implied) }}>{fmtPct(m.implied)}</td>
                     <td style={{ ...tdStyle(), color: aprColor(m.underlying) }}>{fmtPct(m.underlying)}</td>
                     <td style={{ ...tdStyle(), color: yuColor(m.longYU),  fontWeight: 600 }}>{fmtPct(m.longYU)}</td>
                     <td style={{ ...tdStyle(), color: yuColor(m.shortYU), fontWeight: 600 }}>{fmtPct(m.shortYU)}</td>
-                    <td style={{ ...tdStyle(), color: "var(--text-muted)", fontSize: 9, letterSpacing: "0.06em" }}>{m.status}</td>
                   </tr>
                 ))}
               </tbody>
