@@ -5,6 +5,11 @@ set -e
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+echo "=== 0. Setup PostgreSQL ==="
+sudo -u postgres psql -c "CREATE USER funding WITH PASSWORD 'funding_pw_2026';" 2>/dev/null || true
+sudo -u postgres psql -c "CREATE DATABASE funding_db OWNER funding;" 2>/dev/null || true
+sudo -u postgres psql -d funding_db -f "$REPO_DIR/server/migrations/001_init.sql"
+
 echo "=== 1. Build frontend ==="
 cd "$REPO_DIR"
 npm install

@@ -1,7 +1,9 @@
 import express from "express";
-import { getRates, getLatestRate } from "./db.js";
-import { fetchVenue } from "./fetchers.js";
+import { getRates, getLatestRate, getBulkAPR, getCoins } from "./db.js";
+import { fetchVenue, fetchLive } from "./fetchers.js";
+import { getCoinsForVenue } from "./discovery.js";
 import { startScheduler, initialBackfill } from "./scheduler.js";
+import { mountProxy } from "./proxy.js";
 
 const app = express();
 app.use(express.json());
@@ -9,6 +11,9 @@ app.use(express.json());
 // CORS for local dev (frontend on :5173)
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
@@ -81,26 +86,49 @@ app.get("/api/funding", async (req, res) => {
 });
 
 // ── GET /api/live?venue=hl&coin=BTC ──────────────────────────────────────────
-// Returns the latest stored rate (for live ticker display)
+// Proxies to the exchange's live endpoint for real-time data
 app.get("/api/live", async (req, res) => {
   const { venue, coin } = req.query;
   if (!venue || !coin) return res.status(400).json({ error: "venue and coin required" });
 
   try {
-    let row = await getLatestRate(venue, coin);
-
-    if (!row) {
-      const live = await fetchVenue(venue, coin, 1);
-      if (live.length) {
-        row = live[live.length - 1];
-        const { insertRates } = await import("./db.js");
-        await insertRates([{ venue, coin, time: row.time, rate: row.fundingRate }]);
-      }
-    }
-
-    res.json(row ?? null);
+    const data = await fetchLive(venue, coin);
+    res.json(data);
   } catch (e) {
     console.error("[api/live]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/bulk-apr?venue=hl ───────────────────────────────────────────────
+// Returns [{coin, avg7, avg30, avg90}] for all coins on a venue (single SQL query)
+app.get("/api/bulk-apr", async (req, res) => {
+  const { venue } = req.query;
+  if (!venue) return res.status(400).json({ error: "venue required" });
+
+  try {
+    const data = await getBulkAPR(venue);
+    res.json(data);
+  } catch (e) {
+    console.error("[api/bulk-apr]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/coins?venue=hl ──────────────────────────────────────────────────
+// Returns list of coins available on a venue (from DB + dynamic discovery)
+app.get("/api/coins", async (req, res) => {
+  const { venue } = req.query;
+  if (!venue) return res.status(400).json({ error: "venue required" });
+
+  try {
+    let coins = await getCoins(venue);
+    if (!coins.length) {
+      coins = await getCoinsForVenue(venue);
+    }
+    res.json(coins);
+  } catch (e) {
+    console.error("[api/coins]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -198,13 +226,21 @@ app.get("/api/boros", async (req, res) => {
 
 // ── GET /api/status ───────────────────────────────────────────────────────────
 app.get("/api/status", async (req, res) => {
-  const { default: pool } = await import("./db.js");
-  const r = await pool.query("SELECT COUNT(*) AS n, MAX(time) AS last FROM funding_rates");
-  res.json({ rows: Number(r.rows[0].n), lastTime: Number(r.rows[0].last) });
+  try {
+    const { default: pool } = await import("./db.js");
+    const r = await pool.query("SELECT COUNT(*) AS n, MAX(time) AS last FROM funding_rates");
+    res.json({ rows: Number(r.rows[0].n), lastTime: Number(r.rows[0].last) });
+  } catch (e) {
+    console.error("[api/status]", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
+// ── CORS proxy for blocked venues (boros, lighter, asterdex) ─────────────────
+mountProxy(app);
+
 // ── Start ─────────────────────────────────────────────────────────────────────
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}`);
   startScheduler();

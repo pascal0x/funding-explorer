@@ -35,6 +35,12 @@ const MARKETS = {
   "FX / ETF":    ["EUR","JPY","DXY","EWJ","EWY"],
 };
 
+// Asterdex non-crypto markets (different symbol names than HL)
+const AD_STOCKS = ["AAPL","AMZN","GOOG","META","MSFT","NVDA","TSLA","INTC","HOOD","MU"];
+const AD_COMMODITIES = ["XAU","XAG","XCU","XPD","XPT","NATGAS","CL"];
+const AD_FX = ["SPX","QQQ","EWY","XNY"];
+const AD_NON_CRYPTO = new Set([...AD_STOCKS, ...AD_COMMODITIES, ...AD_FX]);
+
 const XYZ = new Set([
   "NVDA","TSLA","AAPL","MSFT","META","AMZN","GOOGL","COIN","AMD","PLTR","NFLX",
   "MSTR","GME","INTC","GOLD","SILVER","NATGAS","BRENTOIL","COPPER","PLATINUM",
@@ -97,6 +103,7 @@ let ALL_ASSETS = [...new Set([
   ...MARKETS["Crypto"], ...MARKETS["Stocks"],
   ...MARKETS["Commodities"], ...MARKETS["FX / ETF"],
 ])];
+let ARBI_ASSETS = VENUE_ASSETS.bn;
 
 function apiCoin(c) { return XYZ.has(c) ? `xyz:${c}` : c; }
 function isXyz(c) { return XYZ.has(c); }
@@ -113,6 +120,10 @@ function fmtDateTime(ts) {
 }
 function getCat(coin) {
   for (const [cat, list] of Object.entries(MARKETS)) if (list.includes(coin)) return cat;
+  // Also check Asterdex-specific names
+  if (AD_STOCKS.includes(coin)) return "Stocks";
+  if (AD_COMMODITIES.includes(coin)) return "Commodities";
+  if (AD_FX.includes(coin)) return "FX / ETF";
   return "Other";
 }
 
@@ -140,22 +151,13 @@ const _dynVenueAssets = {}; // { bn: [], by: [], okx: [], dy: [], lt: [], ad: []
 
 function getVenueCoins(venue, category) {
   if (venue === "hl") return MARKETS[category] ?? [];
-  // Asterdex: may have stocks/commodities/FX — filter dynamic list against category
+  // Asterdex supports non-crypto
   if (venue === "ad") {
-    if (_dynVenueAssets.ad?.length) {
-      const catSet = new Set(MARKETS[category] ?? []);
-      // For Crypto, also include any ad coin not in other categories
-      if (category === "Crypto") {
-        const nonCrypto = new Set([
-          ...MARKETS["Stocks"], ...MARKETS["Commodities"], ...(MARKETS["FX / ETF"] ?? [])
-        ]);
-        return _dynVenueAssets.ad.filter(c => !nonCrypto.has(c) || catSet.has(c));
-      }
-      return _dynVenueAssets.ad.filter(c => catSet.has(c));
-    }
-    // Fallback: crypto only
-    if (category !== "Crypto") return [];
-    return MARKETS["Crypto"].filter(c => CEX_CRYPTO.has(c));
+    if (category === "Stocks") return AD_STOCKS;
+    if (category === "Commodities") return AD_COMMODITIES;
+    if (category === "FX / ETF") return AD_FX;
+    // Crypto: use dynamic list minus non-crypto
+    if (_dynVenueAssets.ad?.length) return _dynVenueAssets.ad.filter(c => !AD_NON_CRYPTO.has(c));
   }
   if (category !== "Crypto") return [];
   if (_dynVenueAssets[venue]?.length) {
@@ -289,6 +291,15 @@ async function fetchBinanceLiveFunding(coin) {
 async function fetchAsterdexFundingHistory(coin, days) {
   try {
     const startTime = Date.now() - days * 24 * 3600 * 1000;
+    // Try backend proxy first (Asterdex blocks browser CORS)
+    try {
+      const proxyRes = await fetch(`/api/proxy/asterdex/fapi/v1/fundingRate?symbol=${adSym(coin)}&startTime=${startTime}&limit=1000`);
+      if (proxyRes.ok) {
+        const d = await proxyRes.json();
+        if (Array.isArray(d) && d.length) return d.map(x => ({ time: x.fundingTime, fundingRate: x.fundingRate, premium: "0" }));
+      }
+    } catch {}
+    // Fallback: direct call (works in dev or if CORS is not blocked)
     const res = await fetch(
       `https://fapi.asterdex.com/fapi/v1/fundingRate?symbol=${adSym(coin)}&startTime=${startTime}&limit=1000`
     );
@@ -301,6 +312,15 @@ async function fetchAsterdexFundingHistory(coin, days) {
 
 async function fetchAsterdexLiveFunding(coin) {
   try {
+    // Try backend proxy first
+    try {
+      const proxyRes = await fetch(`/api/proxy/asterdex/fapi/v1/premiumIndex?symbol=${adSym(coin)}`);
+      if (proxyRes.ok) {
+        const d = await proxyRes.json();
+        if (d?.lastFundingRate != null) return { funding: d.lastFundingRate, nextFundingTime: d.nextFundingTime };
+      }
+    } catch {}
+    // Fallback: direct call
     const res = await fetch(`https://fapi.asterdex.com/fapi/v1/premiumIndex?symbol=${adSym(coin)}`);
     if (!res.ok) return null;
     const d = await res.json();
@@ -427,11 +447,8 @@ async function fetchDydxLiveFunding(coin) {
 let _lighterMarkets = null;
 async function getLighterMarketId(coin) {
   if (!_lighterMarkets) {
-    try {
-      const res = await fetch("https://mainnet.zklighter.elliot.ai/api/v1/orderbooks");
-      if (!res.ok) { _lighterMarkets = {}; return null; }
-      const d = await res.json();
-      _lighterMarkets = {};
+    _lighterMarkets = {};
+    const parseLighterMarkets = (d) => {
       const list = d.order_books ?? d.orderBooks ?? d.markets ?? d ?? [];
       if (Array.isArray(list)) {
         list.forEach(m => {
@@ -445,7 +462,17 @@ async function getLighterMarketId(coin) {
           if (sym) _lighterMarkets[sym] = v?.market_id ?? v;
         });
       }
-    } catch { _lighterMarkets = {}; }
+    };
+    // Try backend proxy first (Lighter blocks browser CORS)
+    try {
+      const proxyRes = await fetch("/api/proxy/lighter/orderbooks");
+      if (proxyRes.ok) { parseLighterMarkets(await proxyRes.json()); return _lighterMarkets[coin] ?? null; }
+    } catch {}
+    // Fallback: direct call
+    try {
+      const res = await fetch("https://mainnet.zklighter.elliot.ai/api/v1/orderbooks");
+      if (res.ok) parseLighterMarkets(await res.json());
+    } catch {}
   }
   return _lighterMarkets[coin] ?? null;
 }
@@ -455,17 +482,25 @@ async function fetchLighterFundingHistory(coin, days) {
     const marketId = await getLighterMarketId(coin);
     if (marketId === null) return [];
     const startTime = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000);
+    const parseRates = (d) => {
+      const list = d.funding_rates ?? d.fundingRates ?? (Array.isArray(d) ? d : []);
+      return list.map(x => ({
+        time: (x.timestamp ?? x.time) * 1000,
+        fundingRate: String(x.rate ?? x.funding_rate ?? "0"),
+        premium: "0",
+      })).sort((a, b) => a.time - b.time);
+    };
+    // Try backend proxy first
+    try {
+      const proxyRes = await fetch(`/api/proxy/lighter/funding-rates?market_id=${marketId}&start_time=${startTime}&limit=500`);
+      if (proxyRes.ok) { const d = await proxyRes.json(); const r = parseRates(d); if (r.length) return r; }
+    } catch {}
+    // Fallback: direct call
     const res = await fetch(
       `https://mainnet.zklighter.elliot.ai/api/v1/funding-rates?market_id=${marketId}&start_time=${startTime}&limit=500`
     );
     if (!res.ok) return [];
-    const d = await res.json();
-    const list = d.funding_rates ?? d.fundingRates ?? (Array.isArray(d) ? d : []);
-    return list.map(x => ({
-      time: (x.timestamp ?? x.time) * 1000,
-      fundingRate: String(x.rate ?? x.funding_rate ?? "0"),
-      premium: "0",
-    })).sort((a, b) => a.time - b.time);
+    return parseRates(await res.json());
   } catch { return []; }
 }
 
@@ -473,14 +508,22 @@ async function fetchLighterLiveFunding(coin) {
   try {
     const marketId = await getLighterMarketId(coin);
     if (marketId === null) return null;
+    const parseLive = (d) => {
+      const list = d.funding_rates ?? d.fundingRates ?? (Array.isArray(d) ? d : []);
+      const last = list[list.length - 1];
+      return last ? { funding: String(last.rate ?? last.funding_rate ?? "0"), nextFundingTime: null } : null;
+    };
+    // Try backend proxy first
+    try {
+      const proxyRes = await fetch(`/api/proxy/lighter/funding-rates?market_id=${marketId}&limit=1`);
+      if (proxyRes.ok) { const r = parseLive(await proxyRes.json()); if (r) return r; }
+    } catch {}
+    // Fallback: direct call
     const res = await fetch(
       `https://mainnet.zklighter.elliot.ai/api/v1/funding-rates?market_id=${marketId}&limit=1`
     );
     if (!res.ok) return null;
-    const d = await res.json();
-    const list = d.funding_rates ?? d.fundingRates ?? (Array.isArray(d) ? d : []);
-    const last = list[list.length - 1];
-    return last ? { funding: String(last.rate ?? last.funding_rate ?? "0"), nextFundingTime: null } : null;
+    return parseLive(await res.json());
   } catch { return null; }
 }
 
@@ -823,7 +866,7 @@ function CoinSelector({ coins, selected, onSelect }) {
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
 function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
   const isMobile = useIsMobile();
-  const initCat = () => { for (const [c, l] of Object.entries(MARKETS)) if (l.includes(initialCoin)) return c; return "Crypto"; };
+  const initCat = () => getCat(initialCoin) === "Other" ? "Crypto" : getCat(initialCoin);
   const [category, setCategory] = usePersistedState("explorerCategory", initCat());
   const [coin, setCoin] = useState(initialCoin);
   const [inputCoin, setInputCoin] = useState(initialCoin);
@@ -860,6 +903,17 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
 
   const loadLive = useCallback(async (c, v, d) => {
     try {
+      // For HL with named dex, go direct (not stored in backend)
+      if (v === "hl" && d) { setLive(await fetchLiveFunding(c, d)); return; }
+      // Try backend /api/live first
+      try {
+        const res = await fetch(`/api/live?venue=${v}&coin=${encodeURIComponent(c)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.fundingRate != null) { setLive({ funding: data.fundingRate, nextFundingTime: data.nextFundingTime }); return; }
+        }
+      } catch {}
+      // Fallback: direct exchange calls
       if      (v === "hl")  setLive(await fetchLiveFunding(c, d));
       else if (v === "bn")  setLive(await fetchBinanceLiveFunding(c));
       else if (v === "by")  setLive(await fetchBybitLiveFunding(c));
@@ -921,9 +975,15 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
   const handleVenueChange = (vid) => {
     setVenue(vid);
     setHlDex(null); // reset to main USDC dex on venue change
-    if (vid !== "hl") {
+    if (vid !== "hl" && vid !== "ad") {
       if (category !== "Crypto") setCategory("Crypto");
       const available = getVenueCoins(vid, "Crypto");
+      if (available.length > 0 && !available.includes(coin)) {
+        setCoin(available[0]); setInputCoin(available[0]); setTablePage(0); if (onCoinChange) onCoinChange(available[0]);
+      }
+    } else if (vid === "ad" && category !== "Crypto") {
+      // Asterdex supports non-crypto; check if current coin is available
+      const available = getVenueCoins(vid, category);
       if (available.length > 0 && !available.includes(coin)) {
         setCoin(available[0]); setInputCoin(available[0]); setTablePage(0); if (onCoinChange) onCoinChange(available[0]);
       }
@@ -1002,9 +1062,12 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
             {Object.keys(MARKETS).map(cat => {
-              const enabled = venue === "hl" && hlDex === null || cat === "Crypto";
+              const enabled = (venue === "hl" && hlDex === null) || venue === "ad" || cat === "Crypto";
+              const firstCoin = venue === "ad" && cat !== "Crypto"
+                ? (cat === "Stocks" ? AD_STOCKS[0] : cat === "Commodities" ? AD_COMMODITIES[0] : AD_FX[0])
+                : (MARKETS[cat]?.[0]);
               return (
-                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
+                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); setCoin(firstCoin); setInputCoin(firstCoin); setTablePage(0); }} style={{
                   background: category === cat ? "#4a9eff22" : "transparent",
                   border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
                   borderRadius: 4, color: category === cat ? "#4a9eff" : enabled ? "var(--text-dim)" : "var(--border)",
@@ -1188,7 +1251,8 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
 
 // ── SPREAD (cross-exchange historical averages) ────────────────────────────────
 // Venues available for Spread — Lighter/Asterdex excluded (CORS blocked without backend)
-const SPREAD_VENUES = VENUES.filter(v => !["lt", "ad"].includes(v.id));
+// All venues available for Spread (Lighter/Asterdex CORS handled via backend proxy)
+const SPREAD_VENUES = VENUES;
 
 // Generic APR helper using VENUE_FREQ
 function venueAvgAPR(data, vid) {
@@ -1516,17 +1580,23 @@ function ArbitragePage({ onNavigate }) {
 const BOROS_BASE = "https://api.boros.finance/core";
 const BOROS_CORS_PROXY = "https://corsproxy.io/?url=";
 
-// Try direct fetch, fallback to CORS proxy if blocked
+// Try backend proxy → direct fetch → CORS proxy fallback
 async function borosFetch(url) {
+  // 1. Try backend proxy first (server-side, no CORS issues)
+  const borosPath = url.replace(`${BOROS_BASE}/`, "");
+  try {
+    const r = await fetch(`/api/proxy/boros/${borosPath}`);
+    if (r.ok) return r.json();
+  } catch {}
+  // 2. Try direct fetch
   try {
     const r = await fetch(url, { headers: { Accept: "application/json" } });
     if (r.ok) return r.json();
-    // Auth error — don't bother retrying via proxy
     if (r.status === 401 || r.status === 403) throw new Error(`Boros API ${r.status}`);
   } catch (e) {
     if (/Boros API \d/.test(e.message)) throw e;
-    // Network/CORS error — fall through to proxy
   }
+  // 3. Last resort: CORS proxy
   const proxyUrl = `${BOROS_CORS_PROXY}${encodeURIComponent(url)}`;
   const r = await fetch(proxyUrl, { headers: { Accept: "application/json", "x-requested-with": "XMLHttpRequest" } });
   if (!r.ok) throw new Error(`Boros API ${r.status}`);
@@ -2244,7 +2314,7 @@ function TrendPage() {
   const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); };
   const handleVenueChange = (vid) => {
     setVenue(vid);
-    if (vid !== "hl" && category !== "Crypto") {
+    if (vid !== "hl" && vid !== "ad" && category !== "Crypto") {
       setCategory("Crypto");
       const available = getVenueCoins(vid, "Crypto");
       if (available.length > 0 && !available.includes(coin)) { setCoin(available[0]); setInputCoin(available[0]); }
@@ -2319,9 +2389,12 @@ function TrendPage() {
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
             {Object.keys(MARKETS).map(cat => {
-              const enabled = venue === "hl" || cat === "Crypto";
+              const enabled = venue === "hl" || venue === "ad" || cat === "Crypto";
+              const firstCoin = venue === "ad" && cat !== "Crypto"
+                ? (cat === "Stocks" ? AD_STOCKS[0] : cat === "Commodities" ? AD_COMMODITIES[0] : AD_FX[0])
+                : (MARKETS[cat]?.[0]);
               return (
-                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); handleCoinSelect(MARKETS[cat][0]); }} style={{
+                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); setCoin(firstCoin); setInputCoin(firstCoin); }} style={{
                   background: category === cat ? "#4a9eff22" : "transparent",
                   border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
                   borderRadius: 4, color: category === cat ? "#4a9eff" : enabled ? "var(--text-dim)" : "var(--border)",

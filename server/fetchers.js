@@ -1,20 +1,34 @@
 // Server-side fetchers — no CORS constraints
-// All functions return [{time (ms), fundingRate (string or number)}]
+// All history functions return [{time (ms), fundingRate (string or number)}]
+// All live functions return {fundingRate, nextFundingTime?} or null
+
+// XYZ set — stocks, commodities, FX that need special HL API path
+const XYZ = new Set([
+  "NVDA","TSLA","AAPL","MSFT","META","AMZN","GOOGL","COIN","AMD","PLTR","NFLX",
+  "MSTR","GME","INTC","GOLD","SILVER","NATGAS","BRENTOIL","COPPER","PLATINUM",
+  "PALLADIUM","URANIUM","ALUMINIUM","EUR","JPY","DXY","EWJ","EWY","TSM","HOOD",
+  "LLY","ORCL","MU","CRCL","BABA","RIVN","COST","XYZ100","CRWV","SKHX","SMSN",
+  "SNDK","SOFTBANK","KIOXIA","USAR","URNM",
+]);
 
 // ── Hyperliquid ───────────────────────────────────────────────────────────────
 const HL_BASE = "https://api.hyperliquid.xyz/info";
+
+function hlApiCoin(coin) {
+  return XYZ.has(coin) ? `xyz:${coin}` : coin;
+}
 
 export async function fetchHL(coin, days = 90) {
   const results = [];
   const startTime = Date.now() - days * 24 * 3600 * 1000;
   let cursor = null;
+  const apiCoin = hlApiCoin(coin);
 
   while (true) {
     const body = {
       type: "fundingHistory",
-      coin,
+      coin: apiCoin,
       startTime: cursor ?? startTime,
-      ...(cursor ? {} : {}),
     };
     const r = await fetch(HL_BASE, {
       method: "POST",
@@ -33,6 +47,28 @@ export async function fetchHL(coin, days = 90) {
     if (cursor > Date.now()) break;
   }
   return results;
+}
+
+export async function fetchHLLive(coin) {
+  const isXyz = XYZ.has(coin);
+  const body = { type: "metaAndAssetCtxs" };
+  if (isXyz) body.dex = "xyz";
+  const r = await fetch(HL_BASE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) return null;
+  const data = await r.json();
+  const universe = data?.[0]?.universe ?? [];
+  const ctxs = data?.[1] ?? [];
+  const idx = universe.findIndex(u => u.name === coin);
+  if (idx < 0 || !ctxs[idx]) return null;
+  return {
+    fundingRate: ctxs[idx].funding,
+    premium: ctxs[idx].premium,
+    nextFundingTime: null,
+  };
 }
 
 // ── Binance ───────────────────────────────────────────────────────────────────
@@ -60,6 +96,17 @@ export async function fetchBinance(coin, days = 90) {
     if (start > Date.now()) break;
   }
   return results;
+}
+
+export async function fetchBinanceLive(coin) {
+  const symbol = bnSymbol(coin);
+  const r = await fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`);
+  if (!r.ok) return null;
+  const d = await r.json();
+  return {
+    fundingRate: d.lastFundingRate,
+    nextFundingTime: Number(d.nextFundingTime),
+  };
 }
 
 // ── Bybit ─────────────────────────────────────────────────────────────────────
@@ -94,6 +141,19 @@ export async function fetchBybit(coin, days = 90) {
   return results.filter(d => d.time >= since);
 }
 
+export async function fetchBybitLive(coin) {
+  const symbol = bySymbol(coin);
+  const r = await fetch(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`);
+  if (!r.ok) return null;
+  const json = await r.json();
+  const item = json?.result?.list?.[0];
+  if (!item) return null;
+  return {
+    fundingRate: item.fundingRate,
+    nextFundingTime: Number(item.nextFundingTime),
+  };
+}
+
 // ── OKX ──────────────────────────────────────────────────────────────────────
 function okxSymbol(coin) {
   const MAP = { kPEPE: "1000PEPE", SPX: "1000SPX", BNB: "BNB" };
@@ -123,6 +183,19 @@ export async function fetchOKX(coin, days = 90) {
   return results.filter(d => d.time >= since);
 }
 
+export async function fetchOKXLive(coin) {
+  const instId = okxSymbol(coin);
+  const r = await fetch(`https://www.okx.com/api/v5/public/funding-rate?instId=${instId}`);
+  if (!r.ok) return null;
+  const json = await r.json();
+  const d = json?.data?.[0];
+  if (!d) return null;
+  return {
+    fundingRate: d.fundingRate,
+    nextFundingTime: Number(d.nextFundingTime),
+  };
+}
+
 // ── dYdX ─────────────────────────────────────────────────────────────────────
 const DYDX_COINS = ["BTC","ETH","SOL","AVAX","LINK","ARB","OP","DOGE","ADA",
   "XRP","LTC","MATIC","UNI","AAVE","CRV","JUP","WIF","PEPE","SUI","APT","BNB"];
@@ -150,6 +223,20 @@ export async function fetchDydx(coin, days = 90) {
     if (list.length < 100) break;
   }
   return results.filter(d => d.time >= since);
+}
+
+export async function fetchDydxLive(coin) {
+  if (!DYDX_COINS.includes(coin)) return null;
+  const ticker = `${coin}-USD`;
+  const r = await fetch(`https://indexer.dydx.trade/v4/perpetualMarkets?ticker=${ticker}`);
+  if (!r.ok) return null;
+  const json = await r.json();
+  const market = json?.markets?.[ticker];
+  if (!market) return null;
+  return {
+    fundingRate: market.nextFundingRate,
+    nextFundingTime: null,
+  };
 }
 
 // ── Lighter ───────────────────────────────────────────────────────────────────
@@ -200,6 +287,22 @@ export async function fetchLighter(coin, days = 90) {
   return results.filter(d => d.time >= since);
 }
 
+export async function fetchLighterLive(coin) {
+  const markets = await getLighterMarkets();
+  const marketId = markets[coin];
+  if (marketId === undefined) return null;
+  const r = await fetch(`${LIGHTER_BASE}/funding_rate_history?market_id=${marketId}&count=1`);
+  if (!r.ok) return null;
+  const json = await r.json();
+  const list = json.funding_rates ?? json.results ?? json ?? [];
+  if (!Array.isArray(list) || !list.length) return null;
+  const d = list[0];
+  return {
+    fundingRate: d.funding_rate ?? d.rate,
+    nextFundingTime: null,
+  };
+}
+
 // ── Asterdex (Binance-compatible) ─────────────────────────────────────────────
 function adSymbol(coin) {
   const MAP = { kPEPE: "1000PEPE" };
@@ -227,7 +330,18 @@ export async function fetchAsterdex(coin, days = 90) {
   return results.filter(d => d.time >= since);
 }
 
-// ── Dispatcher ────────────────────────────────────────────────────────────────
+export async function fetchAsterdexLive(coin) {
+  const symbol = adSymbol(coin);
+  const r = await fetch(`https://fapi.asterdex.com/fapi/v1/premiumIndex?symbol=${symbol}`);
+  if (!r.ok) return null;
+  const d = await r.json();
+  return {
+    fundingRate: d.lastFundingRate,
+    nextFundingTime: Number(d.nextFundingTime),
+  };
+}
+
+// ── Dispatchers ──────────────────────────────────────────────────────────────
 export async function fetchVenue(venue, coin, days) {
   switch (venue) {
     case "hl":  return fetchHL(coin, days);
@@ -238,5 +352,18 @@ export async function fetchVenue(venue, coin, days) {
     case "lt":  return fetchLighter(coin, days);
     case "ad":  return fetchAsterdex(coin, days);
     default:    return [];
+  }
+}
+
+export async function fetchLive(venue, coin) {
+  switch (venue) {
+    case "hl":  return fetchHLLive(coin);
+    case "bn":  return fetchBinanceLive(coin);
+    case "by":  return fetchBybitLive(coin);
+    case "okx": return fetchOKXLive(coin);
+    case "dy":  return fetchDydxLive(coin);
+    case "lt":  return fetchLighterLive(coin);
+    case "ad":  return fetchAsterdexLive(coin);
+    default:    return null;
   }
 }
