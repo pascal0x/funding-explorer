@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid
@@ -1684,7 +1684,30 @@ function BorosPage() {
     else { setSortCol(col); setSortDir(-1); }
   };
 
-  const venueObj = VENUES.find(v => v.id === selectedVenue) ?? VENUES[0];
+  // Derive available venues from platforms present in Boros markets data
+  const platformToVenueId = { hyperliquid: "hl", binance: "bn", bybit: "by", okx: "okx", dydx: "dy", lighter: "lt", asterdex: "ad" };
+  const availableVenueIds = useMemo(() => {
+    if (!markets || !markets.length) return ["hl"];
+    const ids = new Set();
+    markets.forEach(m => {
+      const key = m.platform.toLowerCase();
+      for (const [k, id] of Object.entries(platformToVenueId)) {
+        if (key.includes(k)) { ids.add(id); break; }
+      }
+    });
+    return ids.size ? [...ids] : ["hl"];
+  }, [markets]);
+
+  // Auto-correct selectedVenue if it's not available
+  useEffect(() => {
+    if (!availableVenueIds.includes(selectedVenue)) {
+      setSelectedVenue(availableVenueIds[0]);
+    }
+  }, [availableVenueIds, selectedVenue]);
+
+  const availableVenues = VENUES.filter(v => availableVenueIds.includes(v.id));
+
+  const venueObj = VENUES.find(v => v.id === selectedVenue) ?? availableVenues[0] ?? VENUES[0];
   const underlyingLabel = period === "live" ? "UNDERLYING APR" : period === "7d" ? `UNDERLYING 7D (${venueObj.label})` : `UNDERLYING 30D (${venueObj.label})`;
   const impliedLabel = period === "live" ? "IMPLIED APR" : period === "7d" ? "IMPLIED 7D AVG" : "IMPLIED APR (live)";
 
@@ -1724,7 +1747,7 @@ function BorosPage() {
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em", marginBottom: 6 }}>UNDERLYING VENUE</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {VENUES.map(v => {
+            {availableVenues.map(v => {
               const active = selectedVenue === v.id;
               return (
                 <button key={v.id} onClick={() => setSelectedVenue(v.id)}
