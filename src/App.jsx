@@ -1027,6 +1027,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
   const [coinInfo, setCoinInfo] = useState(null);
   const [coinInfoLoading, setCoinInfoLoading] = useState(false);
   const [hlMarket, setHlMarket] = useState(null);
+  const [structuralData, setStructuralData] = useState([]);
   const MKT_PAGE_SIZE = 20;
 
   // MA overlay states (merged from TrendPage)
@@ -1062,7 +1063,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
   }, [showMA, data, activeWinList, maMode, ppd]);
 
   // Structural funding MAs (for basis trade analysis)
-  const structuralMAs = useMemo(() => computeStructuralMAs(data, ppd), [data, ppd]);
+  const structuralMAs = useMemo(() => computeStructuralMAs(structuralData, ppd), [structuralData, ppd]);
 
   // Fetch ALL market data from bulk-apr endpoint
   useEffect(() => {
@@ -1106,6 +1107,17 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
       .then(d => setHlMarket(d?.found ? d : null))
       .catch(() => setHlMarket(null));
   }, [venue, coin]);
+
+  // Always fetch 90d for structural funding (independent of chart period)
+  useEffect(() => {
+    if (CRYPTO_ONLY_VENUES.has(venue) && isXyz(coin)) { setStructuralData([]); return; }
+    apiFetchHistory(venue, coin, 90, venue === "hl" ? hlDex : null)
+      .then(raw => {
+        const parsed = raw.map(dt => ({ time: dt.time, rate: parseFloat(dt.fundingRate) * 100 }));
+        setStructuralData(parsed);
+      })
+      .catch(() => setStructuralData([]));
+  }, [coin, venue, hlDex]);
 
   // When hlDex changes, load its coins and auto-select first one
   useEffect(() => {
@@ -1267,7 +1279,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
                   <thead>
                     <tr style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
                       <th style={{ padding: "7px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 8, letterSpacing: "0.1em", fontWeight: 600 }}>ASSET</th>
-                      {[{k:"lastRate",l:"RATE"},{k:"apr3",l:"3D"},{k:"apr7",l:"7D"},{k:"apr30",l:"30D"},{k:"apr90",l:"90D"}].map(c => (
+                      {[{k:"lastRate",l:"RATE"},{k:"apr3",l:"3D"},{k:"apr7",l:"7D"}].map(c => (
                         <th key={c.k} onClick={() => handleMktSort(c.k)} style={{ padding: "7px 4px", textAlign: "right", color: mktSort.col === c.k ? "#4a9eff" : "var(--text-label)", fontSize: 8, letterSpacing: "0.05em", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}>
                           {c.l} {mktSort.col === c.k ? (mktSort.dir > 0 ? "▲" : "▼") : ""}
                         </th>
@@ -1309,18 +1321,12 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
                           <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr7 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
                             {row.apr7 != null ? fmtAPR(row.apr7) : "—"}
                           </td>
-                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr30 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
-                            {row.apr30 != null ? fmtAPR(row.apr30) : "—"}
-                          </td>
-                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr90 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
-                            {row.apr90 != null ? fmtAPR(row.apr90) : "—"}
-                          </td>
                           </tr>
                         </Fragment>
                       );
                     })}
                     {mktPageData.length === 0 && (
-                      <tr><td colSpan={6} style={{ padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>No markets found</td></tr>
+                      <tr><td colSpan={4} style={{ padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>No markets found</td></tr>
                     )}
                   </tbody>
                 </table>
