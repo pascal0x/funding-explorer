@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from "react";
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid
@@ -863,16 +863,149 @@ function CoinSelector({ coins, selected, onSelect }) {
   );
 }
 
+// ── FAVORITES (localStorage) ─────────────────────────────────────────────────
+function useFavorites() {
+  const [favorites, setFavorites] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("funding-favorites") || "[]")); }
+    catch { return new Set(); }
+  });
+  const toggle = useCallback((coin) => {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (next.has(coin)) next.delete(coin); else next.add(coin);
+      localStorage.setItem("funding-favorites", JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+  return { favorites, toggle };
+}
+
+// ── OI CAP (Hyperliquid only) ────────────────────────────────────────────────
+function useOiCapSet(venue) {
+  const [capSet, setCapSet] = useState(new Set());
+  useEffect(() => {
+    if (venue !== "hl") { setCapSet(new Set()); return; }
+    let cancelled = false;
+    fetch("https://api.hyperliquid.xyz/info", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "perpsAtOpenInterestCap" }),
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then(list => { if (!cancelled && Array.isArray(list)) setCapSet(new Set(list)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [venue]);
+  return capSet;
+}
+
+// ── TOP ASSETS BAR ───────────────────────────────────────────────────────────
+// Fetches bulk APR data from the backend for a given venue
+function useTopAssets(venue) {
+  const [data, setData] = useState({ top: [], bottom: [] });
+  useEffect(() => {
+    let cancelled = false;
+    const freq = VENUE_FREQ[venue] ?? 24 * 365;
+    fetch(`/api/bulk-apr?venue=${encodeURIComponent(venue)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => {
+        if (cancelled) return;
+        const all = rows
+          .filter(r => r.avg7 != null)
+          .map(r => ({ coin: r.coin, avg7: r.avg7 * 100 * freq, avg30: r.avg30 != null ? r.avg30 * 100 * freq : null }));
+        const byApr = [...all].sort((a, b) => b.avg7 - a.avg7);
+        const top = byApr.slice(0, 3);
+        const bottom = byApr.slice(-3).reverse(); // lowest first
+        setData({ top, bottom });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [venue]);
+  return data;
+}
+
+// Renders a horizontal row of top asset cards
+// items: [{label, value (number, APR %), onClick?}]
+function TopAssetsBar({ items, activeLabel, onSelect, splitAt, oiCapSet }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 14, overflowX: "auto", paddingBottom: 2 }}>
+      {items.map((item, i) => {
+        const isActive = activeLabel && item.label === activeLabel;
+        const color = item.value >= 0 ? "#16c784" : "#ea3943";
+        const hasSparkline = item.sparkline && item.sparkline.length > 1;
+        let sparkPoints = "";
+        if (hasSparkline) {
+          const pts = item.sparkline;
+          const mn = Math.min(...pts), mx = Math.max(...pts);
+          const range = mx - mn || 1;
+          sparkPoints = pts.map((v, j) => `${(j / (pts.length - 1)) * 50},${24 - ((v - mn) / range) * 20}`).join(" ");
+        }
+        return (
+          <Fragment key={item.label + i}>
+            {splitAt && i === splitAt && (
+              <div style={{ width: 1, background: "var(--border)", alignSelf: "stretch", flexShrink: 0, margin: "0 2px" }} />
+            )}
+            <div
+              onClick={() => onSelect?.(item.label)}
+              style={{
+                position: "relative",
+                flex: "1 1 0",
+                minWidth: hasSparkline ? 140 : 100,
+                background: isActive ? "#4a9eff12" : "var(--bg-card)",
+                border: `1px solid ${isActive ? "#4a9eff55" : "var(--border)"}`,
+                borderRadius: 8,
+                padding: "10px 12px",
+                cursor: onSelect ? "pointer" : "default",
+                transition: "border-color 0.15s, background 0.15s",
+                overflow: "hidden",
+              }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? "#4a9eff" : "var(--text)", letterSpacing: "0.02em" }}>
+                {item.label}
+                {oiCapSet?.has(item.label) && <span title="Open Interest cap reached — no new positions can be opened on this asset" style={{ marginLeft: 3, fontSize: 7, opacity: 0.7 }}>🔒</span>}
+              </span>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "'IBM Plex Mono', monospace", lineHeight: 1 }}>
+                {item.value >= 0 ? "+" : ""}{item.value.toFixed(1)}%
+              </div>
+              {item.sub && <div style={{ fontSize: 8, color: "var(--text-muted)", marginTop: 3, letterSpacing: "0.04em" }}>{item.sub}</div>}
+              {hasSparkline && (
+                <svg width={50} height={24} viewBox="0 0 50 24" style={{ position: "absolute", right: 8, bottom: 8 }}>
+                  <polyline points={sparkPoints} fill="none" stroke={color} strokeWidth={1.5} opacity={0.4} />
+                </svg>
+              )}
+            </div>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── STRUCTURAL FUNDING ANALYSIS ──────────────────────────────────────────────
+
+const SF_HORIZONS = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,21,30,45,60,90];
+
+/** Compute MA for each horizon from raw rates. ppd = periods per day (24 for 1h, 3 for 8h) */
+function computeStructuralMAs(rates, ppd) {
+  if (!rates || rates.length === 0) return [];
+  return SF_HORIZONS
+    .map(d => {
+      const n = d * ppd;               // number of observations for this horizon
+      if (rates.length < n) return null; // not enough data
+      const slice = rates.slice(-n);    // take the last n observations
+      const avg = slice.reduce((s, r) => s + r.rate, 0) / n;
+      return { days: d, ma: avg };      // rate is already in % (fundingRate*100)
+    })
+    .filter(Boolean);
+}
+
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
-function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
+function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
   const isMobile = useIsMobile();
-  const initCat = () => getCat(initialCoin) === "Other" ? "Crypto" : getCat(initialCoin);
-  const [category, setCategory] = usePersistedState("explorerCategory", initCat());
-  const [coin, setCoin] = useState(initialCoin);
-  const [inputCoin, setInputCoin] = useState(initialCoin);
-  const [venue, setVenue] = usePersistedState("explorerVenue", "hl");
-  const [hlDex, setHlDex] = useState(null);       // null = main HL USDC; string = HIP-3 dex name
-  const [perpDexs, setPerpDexs] = useState([]);   // list from perpDexs API
+  const { favorites, toggle: toggleFavorite } = useFavorites();
+  const [inputCoin, setInputCoin] = useState(coin);
+  useEffect(() => { setInputCoin(coin); }, [coin]);
   const [dexCoins, setDexCoins] = useState([]);   // coins available on current hlDex
   const [period, setPeriod] = useState(7);
   const [data, setData] = useState([]);
@@ -881,20 +1014,105 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
   const [error, setError] = useState(null);
   const [stats, setStats] = useState(null);
   const [live, setLive] = useState(null);
-  const [showTable, setShowTable] = useState(false);
-  const [tablePage, setTablePage] = useState(0);
-  const TABLE_SIZE = 50;
   const liveRef = useRef(null);
+  const { top: topAssets, bottom: bottomAssets } = useTopAssets(venue);
+  const oiCapSet = useOiCapSet(venue);
 
-  // Load available HIP-3 DEXs once on mount
-  useEffect(() => { fetchPerpDexs().then(setPerpDexs); }, []);
+  // Market table states (side-by-side layout)
+  const [marketData, setMarketData] = useState([]);   // [{coin, apr7, apr30, apr90}]
+  const [marketLoading, setMarketLoading] = useState(false);
+  const [mktPage, setMktPage] = useState(0);
+  const [mktSort, setMktSort] = useState({ col: "apr7", dir: -1 });
+  const [searchFilter, setSearchFilter] = useState("");
+  const [coinInfo, setCoinInfo] = useState(null);
+  const [coinInfoLoading, setCoinInfoLoading] = useState(false);
+  const [hlMarket, setHlMarket] = useState(null);
+  const MKT_PAGE_SIZE = 20;
+
+  // MA overlay states (merged from TrendPage)
+  const [showMA, setShowMA] = useState(false);
+  const [maMode, setMaMode] = useState("daily");
+  const [activeWins, setActiveWins] = useState(new Set(["ma7", "ma30", "ma90"]));
+
+  const wins = maMode === "daily" ? DAILY_WINS : (INTRADAY_WINS[venue] || DAILY_WINS);
+  const toggleWin = useCallback((key) => {
+    setActiveWins(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) { if (next.size > 1) next.delete(key); }
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Reset active windows when mode changes
+  useEffect(() => {
+    if (maMode === "daily") setActiveWins(new Set(["ma7", "ma30", "ma90"]));
+    else { const w = INTRADAY_WINS[venue] || DAILY_WINS; setActiveWins(new Set(w.slice(0, 2).map(x => x.key))); }
+  }, [maMode, venue]);
+
+  // Compute MA overlay data from existing data
+  const freq = VENUE_FREQ[venue] || 8760;
+  const ppd = venue === "hl" || venue === "dy" || venue === "lt" ? 24 : 3;
+  const activeWinList = wins.filter(w => activeWins.has(w.key));
+  const maData = useMemo(() => {
+    if (!showMA || data.length === 0 || activeWinList.length === 0) return null;
+    const base = data.map(d => ({ time: d.time, rate: d.rate }));
+    const windows = activeWinList.map(w => ({ key: w.key, n: maMode === "daily" ? w.n * ppd : w.n }));
+    return applyRollingMA(base, windows);
+  }, [showMA, data, activeWinList, maMode, ppd]);
+
+  // Structural funding MAs (for basis trade analysis)
+  const structuralMAs = useMemo(() => computeStructuralMAs(data, ppd), [data, ppd]);
+
+  // Fetch ALL market data from bulk-apr endpoint
+  useEffect(() => {
+    if (hlDex) return; // skip bulk fetch for named dexes
+    setMarketLoading(true);
+    const freq = VENUE_FREQ[venue] ?? 24 * 365;
+    fetch(`/api/bulk-apr?venue=${encodeURIComponent(venue)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => {
+        const parsed = rows.map(r => ({
+          coin: r.coin,
+          lastRate: r.lastRate,
+          apr3:  r.avg3  != null ? r.avg3  * 100 * freq : null,
+          apr7:  r.avg7  != null ? r.avg7  * 100 * freq : null,
+          apr30: r.avg30 != null ? r.avg30 * 100 * freq : null,
+          apr90: r.avg90 != null ? r.avg90 * 100 * freq : null,
+        }));
+        setMarketData(parsed);
+        setMarketLoading(false);
+      })
+      .catch(() => { setMarketData([]); setMarketLoading(false); });
+  }, [venue, hlDex]);
+
+  // Fetch coin info from CoinGecko (via backend proxy)
+  useEffect(() => {
+    const sym = coin.replace(/^xyz:/, "");
+    if (!sym) { setCoinInfo(null); return; }
+    setCoinInfoLoading(true);
+    fetch(`/api/coin-info?symbol=${encodeURIComponent(sym)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { setCoinInfo(d); setCoinInfoLoading(false); })
+      .catch(() => { setCoinInfo(null); setCoinInfoLoading(false); });
+  }, [coin]);
+
+  // Fetch Hyperliquid market data (OI, volume, orderbook) when venue is HL
+  useEffect(() => {
+    if (venue !== "hl") { setHlMarket(null); return; }
+    const c = coin.replace(/^xyz:/, "");
+    fetch(`/api/hl-market?coin=${encodeURIComponent(c)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setHlMarket(d?.found ? d : null))
+      .catch(() => setHlMarket(null));
+  }, [venue, coin]);
 
   // When hlDex changes, load its coins and auto-select first one
   useEffect(() => {
     if (hlDex) {
       fetchDexCoins(hlDex).then(coins => {
         setDexCoins(coins);
-        if (coins.length > 0) { setCoin(coins[0]); setInputCoin(coins[0]); setTablePage(0); if (onCoinChange) onCoinChange(coins[0]); }
+        if (coins.length > 0) { setCoin(coins[0]); setInputCoin(coins[0]); }
       });
     } else {
       setDexCoins([]);
@@ -970,281 +1188,537 @@ function ExplorerPage({ initialCoin = "BTC", onCoinChange }) {
     return () => clearInterval(liveRef.current);
   }, [coin, period, venue, hlDex, fetchData, loadLive]);
 
-  const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); setTablePage(0); if (onCoinChange) onCoinChange(c); };
-  const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) { setCoin(c); setTablePage(0); if (onCoinChange) onCoinChange(c); } };
-  const handleVenueChange = (vid) => {
-    setVenue(vid);
-    setHlDex(null); // reset to main USDC dex on venue change
-    if (vid !== "hl" && vid !== "ad") {
-      if (category !== "Crypto") setCategory("Crypto");
-      const available = getVenueCoins(vid, "Crypto");
-      if (available.length > 0 && !available.includes(coin)) {
-        setCoin(available[0]); setInputCoin(available[0]); setTablePage(0); if (onCoinChange) onCoinChange(available[0]);
-      }
-    } else if (vid === "ad" && category !== "Crypto") {
-      // Asterdex supports non-crypto; check if current coin is available
-      const available = getVenueCoins(vid, category);
-      if (available.length > 0 && !available.includes(coin)) {
-        setCoin(available[0]); setInputCoin(available[0]); setTablePage(0); if (onCoinChange) onCoinChange(available[0]);
-      }
-    }
-  };
-
-  const tableData = [...data].reverse();
-  const totalPages = Math.ceil(tableData.length / TABLE_SIZE);
-  const pageData = tableData.slice(tablePage * TABLE_SIZE, (tablePage + 1) * TABLE_SIZE);
+  const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); };
+  const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) setCoin(c); };
 
   const venueInfo = VENUES.find(v2 => v2.id === venue);
+
+  // Market table: filter, sort (favorites first), paginate
+  const filteredMarkets = useMemo(() => {
+    let rows = marketData;
+    if (searchFilter) rows = rows.filter(r => r.coin.toLowerCase().includes(searchFilter.toLowerCase()));
+    const sorted = [...rows].sort((a, b) => mktSort.dir * ((a[mktSort.col] ?? -9999) - (b[mktSort.col] ?? -9999)));
+    // Favorites always on top
+    const favs = sorted.filter(r => favorites.has(r.coin));
+    const rest = sorted.filter(r => !favorites.has(r.coin));
+    return [...favs, ...rest];
+  }, [marketData, searchFilter, mktSort, favorites]);
+  const mktTotalPages = Math.max(1, Math.ceil(filteredMarkets.length / MKT_PAGE_SIZE));
+  const mktPageData = filteredMarkets.slice(mktPage * MKT_PAGE_SIZE, (mktPage + 1) * MKT_PAGE_SIZE);
+  const handleMktSort = (col) => {
+    if (mktSort.col === col) setMktSort(s => ({ ...s, dir: -s.dir }));
+    else setMktSort({ col, dir: -1 });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       {/* Title row */}
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
-          {coin}<span style={{ color: venueInfo?.color ?? "#4a9eff" }}>-PERP</span>
-        </span>
-        {venue === "hl" && (hlDex !== null || isXyz(coin)) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3{hlDex ? ` · ${hlDex}` : ""}</span>}
-      </div>
-
-      {/* Selectors */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {/* Venue selector */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
-            {VENUES.map(v2 => (
-              <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
-                boxSizing: "border-box",
-                background: venue === v2.id ? `${v2.color}22` : "transparent",
-                border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
-                borderRadius: 4,
-                color: venue === v2.id ? v2.color : "var(--text-dim)",
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
-                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
-              }}>{v2.label}</button>
-            ))}
-          </div>
-
-          {/* DEX sub-selector — only shown for Hyperliquid when HIP-3 DEXs are available */}
-          {venue === "hl" && perpDexs.length > 0 && (
-            <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>HIP-3</span>
-              <button onClick={() => setHlDex(null)} style={{
-                boxSizing: "border-box",
-                background: hlDex === null ? "#4a9eff22" : "transparent",
-                border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
-                borderRadius: 4, color: hlDex === null ? "#4a9eff" : "var(--text-dim)",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                fontWeight: hlDex === null ? 600 : 400,
-                padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
-              }}>USDC</button>
-              {perpDexs.map((dx) => {
-                const name = (typeof dx === "string" ? dx : dx?.name);
-                if (!name) return null;
-                const label = dx?.fullName && dx.fullName.length <= 16 ? dx.fullName : name.toUpperCase();
-                return (
-                  <button key={name} onClick={() => setHlDex(name)} style={{
-                    boxSizing: "border-box",
-                    background: hlDex === name ? "#4a9eff22" : "transparent",
-                    border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
-                    borderRadius: 4, color: hlDex === name ? "#4a9eff" : "var(--text-dim)",
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10,
-                    fontWeight: hlDex === name ? 600 : 400,
-                    padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
-                  }}>{label}</button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Category tabs — non-Crypto disabled for non-HL venues or named dex */}
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
-            {Object.keys(MARKETS).map(cat => {
-              const enabled = (venue === "hl" && hlDex === null) || venue === "ad" || cat === "Crypto";
-              const firstCoin = venue === "ad" && cat !== "Crypto"
-                ? (cat === "Stocks" ? AD_STOCKS[0] : cat === "Commodities" ? AD_COMMODITIES[0] : AD_FX[0])
-                : (MARKETS[cat]?.[0]);
-              return (
-                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); setCoin(firstCoin); setInputCoin(firstCoin); setTablePage(0); }} style={{
-                  background: category === cat ? "#4a9eff22" : "transparent",
-                  border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
-                  borderRadius: 4, color: category === cat ? "#4a9eff" : enabled ? "var(--text-dim)" : "var(--border)",
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
-                  padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
-                  letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
-                }}>{cat}</button>
-              );
-            })}
-          </div>
-
-          {/* Coin selector */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Asset</span>
-            <CoinSelector
-              coins={hlDex ? dexCoins : prioritizeCoins(venue, category, getVenueCoins(venue, category))}
-              selected={coin}
-              onSelect={handleCoinSelect}
-            />
-          </div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 3 }}>
+          <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: 0, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+            Explore Funding Rates
+          </h2>
+          {venue === "hl" && (hlDex !== null || isXyz(coin)) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3{hlDex ? ` · ${hlDex}` : ""}</span>}
         </div>
+        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Historical And Live Funding Rates For {coin}-PERP</div>
       </div>
 
-      {/* Stats + controls row */}
-      {stats && (
-        <div style={{ marginBottom: 12, width: "100%" }}>
-          {/* On mobile: period + search in a compact top row */}
-          {isMobile && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
-              {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
-                <button key={p.d} onClick={() => setPeriod(p.d)} style={{
-                  boxSizing: "border-box",
-                  background: period === p.d ? "#4a9eff22" : "transparent",
-                  border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
-                  borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "6px 12px", cursor: "pointer",
-                }}>{p.l}</button>
-              ))}
-              <div style={{ flex: 1 }} />
-              <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
-                style={{ width: 80, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "6px 8px", outline: "none" }} />
-              <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, width: "100%" }}>
-            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
-              <StatCard
-                label="Realtime" live={!!live}
-                value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#16c784" : "#ea3943" }}>{(parseFloat(live.funding) * 100).toFixed(4)}%</span> : "—"}
-                sub={live ? `APR: ${fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}` : "Pending..."}
-                color="var(--text)"
-              />
-              <StatCard label={`Avg ${period}d`} value={fmtRate(stats.avg / 100)} sub={`APR: ${fmtAPR(stats.avgApr)}`} color={stats.avg >= 0 ? "#16c784" : "#ea3943"} />
-              <StatCard label={`Max ${period}d`} value={fmtRate(stats.max / 100)} sub={`APR: ${fmtAPR(stats.maxApr)}`} color="#16c784" />
-              <StatCard label={`Min ${period}d`} value={fmtRate(stats.min / 100)} sub={`APR: ${fmtAPR(stats.minApr)}`} color="#ea3943" />
-              <StatCard label="% Positive" value={stats.positive + "%"} sub={`${stats.count} pts · ${period}d`} color="#4a9eff" />
-            </div>
-            {/* Period + search — desktop only (on mobile shown above) */}
-            {!isMobile && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
-                    <button key={p.d} onClick={() => setPeriod(p.d)} style={{
-                      boxSizing: "border-box", flex: 1,
-                      background: period === p.d ? "#4a9eff22" : "transparent",
-                      border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
-                      borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
-                      fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 10px", cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}>{p.l}</button>
-                  ))}
-                </div>
-                <div style={{ display: "flex" }}>
-                  <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-                    onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
-                    style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", outline: "none" }} />
-                  <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>GO</button>
-                </div>
+      {/* Top assets: 3 highest + 3 lowest */}
+      <TopAssetsBar
+        items={[
+          ...topAssets.map(a => ({ label: a.coin, value: a.avg7, sub: "TOP 7d APR" })),
+          ...bottomAssets.map(a => ({ label: a.coin, value: a.avg7, sub: "LOW 7d APR" })),
+        ]}
+        activeLabel={coin}
+        onSelect={c => { setCoin(c); setInputCoin(c); }}
+        splitAt={3}
+        oiCapSet={oiCapSet}
+      />
+
+      {/* Search + Period row above table */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+        <input value={inputCoin} onChange={e => { setInputCoin(e.target.value.toUpperCase()); setSearchFilter(e.target.value.toUpperCase()); setMktPage(0); }}
+          onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Search..."
+          style={{ width: 100, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 8px", outline: "none" }} />
+        <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "6px 8px", cursor: "pointer" }}>GO</button>
+        <div style={{ flex: 1 }} />
+        {[{l:"3d",d:3},{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
+          <button key={p.d} onClick={() => setPeriod(p.d)} style={{
+            boxSizing: "border-box",
+            background: period === p.d ? "#4a9eff22" : "transparent",
+            border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
+            borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 10px", cursor: "pointer",
+          }}>{p.l}</button>
+        ))}
+      </div>
+
+      {/* Side-by-side: Market table (left) + Chart panel (right) */}
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14 }}>
+        {/* Left: Market table (narrower) */}
+        <div style={{ width: isMobile ? "100%" : "32%", minWidth: isMobile ? 0 : 260, flexShrink: 0 }}>
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+            {marketLoading && (
+              <div style={{ padding: 20, textAlign: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>Loading markets…</div>
+            )}
+            {!marketLoading && (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
+                      <th style={{ padding: "7px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 8, letterSpacing: "0.1em", fontWeight: 600 }}>ASSET</th>
+                      {[{k:"lastRate",l:"RATE"},{k:"apr3",l:"3D"},{k:"apr7",l:"7D"},{k:"apr30",l:"30D"},{k:"apr90",l:"90D"}].map(c => (
+                        <th key={c.k} onClick={() => handleMktSort(c.k)} style={{ padding: "7px 4px", textAlign: "right", color: mktSort.col === c.k ? "#4a9eff" : "var(--text-label)", fontSize: 8, letterSpacing: "0.05em", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}>
+                          {c.l} {mktSort.col === c.k ? (mktSort.dir > 0 ? "▲" : "▼") : ""}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mktPageData.map((row, rowIdx) => {
+                      const isSelected = row.coin === coin;
+                      const isFav = favorites.has(row.coin);
+                      const rateAPR = row.lastRate != null ? row.lastRate * 100 * freq : null;
+                      // Separator line between favorites and non-favorites
+                      const prevRow = rowIdx > 0 ? mktPageData[rowIdx - 1] : null;
+                      const showSep = prevRow && favorites.has(prevRow.coin) && !isFav;
+                      return (
+                        <Fragment key={row.coin}>
+                          {showSep && <tr><td colSpan={6} style={{ padding: 0, height: 2, background: "#4a9eff33" }} /></tr>}
+                          <tr
+                            onClick={() => handleCoinSelect(row.coin)}
+                            style={{ borderBottom: "1px solid var(--border)", background: isSelected ? "#4a9eff11" : "var(--bg-card)", cursor: "pointer" }}
+                            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "var(--bg-alt)"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = isSelected ? "#4a9eff11" : "var(--bg-card)"; }}
+                          >
+                            <td style={{ padding: "6px 6px", color: isSelected ? "#4a9eff" : "var(--text)", fontWeight: isSelected ? 600 : 400, fontSize: 10, whiteSpace: "nowrap" }}>
+                              <span onClick={e => { e.stopPropagation(); toggleFavorite(row.coin); }}
+                                style={{ cursor: "pointer", marginRight: 4, fontSize: 11, color: isFav ? "#f0b90b" : "var(--text-muted)", opacity: isFav ? 1 : 0.4 }}
+                                title={isFav ? "Remove from favorites" : "Add to favorites"}
+                              >{isFav ? "★" : "☆"}</span>
+                              {isSelected && <span style={{ color: "#4a9eff", marginRight: 3 }}>›</span>}
+                              {row.coin}
+                              {oiCapSet.has(row.coin) && <span title="Open Interest cap reached — no new positions can be opened on this asset" style={{ marginLeft: 4, fontSize: 8, opacity: 0.7 }}>🔒</span>}
+                            </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right", color: (rateAPR ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
+                            {rateAPR != null ? fmtAPR(rateAPR) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr3 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
+                            {row.apr3 != null ? fmtAPR(row.apr3) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr7 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
+                            {row.apr7 != null ? fmtAPR(row.apr7) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr30 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
+                            {row.apr30 != null ? fmtAPR(row.apr30) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr90 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
+                            {row.apr90 != null ? fmtAPR(row.apr90) : "—"}
+                          </td>
+                          </tr>
+                        </Fragment>
+                      );
+                    })}
+                    {mktPageData.length === 0 && (
+                      <tr><td colSpan={6} style={{ padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>No markets found</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {/* Pagination */}
+            {filteredMarkets.length > MKT_PAGE_SIZE && (
+              <div style={{ display: "flex", gap: 8, padding: "6px 8px", borderTop: "1px solid var(--border)", alignItems: "center", background: "var(--bg-card)" }}>
+                <button onClick={() => setMktPage(p => Math.max(0, p - 1))} disabled={mktPage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: mktPage === 0 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 8px", cursor: mktPage === 0 ? "default" : "pointer" }}>←</button>
+                <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{mktPage + 1}/{mktTotalPages}</span>
+                <button onClick={() => setMktPage(p => Math.min(mktTotalPages - 1, p + 1))} disabled={mktPage >= mktTotalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: mktPage >= mktTotalPages - 1 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, padding: "3px 8px", cursor: mktPage >= mktTotalPages - 1 ? "default" : "pointer" }}>→</button>
+                <span style={{ fontSize: 8, color: "var(--text-muted)", marginLeft: "auto" }}>{filteredMarkets.length}</span>
               </div>
             )}
           </div>
         </div>
+
+        {/* Right: Controls + Stats + Chart (wider) */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Controls: MA */}
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={() => setShowMA(v => !v)} style={{
+                boxSizing: "border-box",
+                background: showMA ? "#a78bfa22" : "transparent",
+                border: `1px solid ${showMA ? "#a78bfa" : "var(--border)"}`,
+                borderRadius: 4, color: showMA ? "#a78bfa" : "var(--text-dim)",
+                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: showMA ? 600 : 400,
+                padding: "5px 10px", cursor: "pointer", letterSpacing: "0.05em",
+              }}>MA</button>
+              {showMA && (
+                <>
+                  {[["daily","Daily"],["intraday","Intra"]].map(([m, lbl]) => (
+                    <button key={m} onClick={() => setMaMode(m)} style={{
+                      boxSizing: "border-box",
+                      background: maMode === m ? "#a78bfa22" : "transparent",
+                      border: `1px solid ${maMode === m ? "#a78bfa" : "var(--border)"}`,
+                      borderRadius: 4, color: maMode === m ? "#a78bfa" : "var(--text-dim)",
+                      fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: maMode === m ? 600 : 400,
+                      padding: "5px 8px", cursor: "pointer",
+                    }}>{lbl}</button>
+                  ))}
+                  {wins.map((w, i) => {
+                    const color = MA_COLORS[i % MA_COLORS.length];
+                    const active = activeWins.has(w.key);
+                    return (
+                      <button key={w.key} onClick={() => toggleWin(w.key)} style={{
+                        boxSizing: "border-box",
+                        background: active ? `${color}22` : "transparent",
+                        border: `1px solid ${active ? color : "var(--border)"}`,
+                        borderRadius: 4, color: active ? color : "var(--text-muted)",
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
+                        padding: "5px 8px", cursor: "pointer",
+                      }}>{w.label}</button>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Stats */}
+          {stats && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                <StatCard
+                  label="Realtime" live={!!live}
+                  value={live ? <span style={{ color: parseFloat(live.funding) >= 0 ? "#16c784" : "#ea3943" }}>{fmtAPR(toAPR(live.funding, VENUE_FREQ[venue]))}</span> : "—"}
+                  sub={live ? `Rate: ${fmtRate(live.funding)}` : "Pending..."}
+                  color="var(--text)"
+                />
+                <StatCard label={`Avg ${period}d`} value={<span style={{ color: stats.avgApr >= 0 ? "#16c784" : "#ea3943" }}>{fmtAPR(stats.avgApr)}</span>} sub={`${stats.count} pts`} color={stats.avg >= 0 ? "#16c784" : "#ea3943"} />
+                <StatCard label={`Max ${period}d`} value={<span style={{ color: "#16c784" }}>{fmtAPR(stats.maxApr)}</span>} color="#16c784" />
+                <StatCard label={`Min ${period}d`} value={<span style={{ color: "#ea3943" }}>{fmtAPR(stats.minApr)}</span>} color="#ea3943" />
+                {showMA && maData && maData.length > 0 && (() => {
+                  const last = maData[maData.length - 1];
+                  return activeWinList.map((w, i) => {
+                    const color = MA_COLORS[i % MA_COLORS.length];
+                    const val = last[w.key];
+                    if (val == null || isNaN(val)) return null;
+                    return <StatCard key={w.key} label={w.label} value={<span style={{ color: val >= 0 ? "#00d4aa" : "#ff4d6d" }}>{fmtAPR(val)}</span>} color={color} />;
+                  });
+                })()}
+              </div>
+            </div>
+          )}
+
+          {/* Chart */}
+          {(() => {
+            const dayBoundaries = [];
+            for (let i = 1; i < data.length; i++) {
+              const prevDay = new Date(data[i-1].time).toDateString();
+              const currDay = new Date(data[i].time).toDateString();
+              if (currDay !== prevDay) dayBoundaries.push(data[i].time);
+            }
+            const chartData = (showMA && maData && maData.length === data.length)
+              ? data.map((d, idx) => ({ ...d, ...maData[idx] }))
+              : data;
+            return (
+              <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 4px 8px", minHeight: 300, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ fontSize: 10, color: "var(--text)", fontWeight: 600, padding: "0 10px 8px", letterSpacing: "0.02em" }}>{coin}-PERP · {venueInfo?.label}</div>
+                {loading && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>⟳ {loadingMsg}</div>}
+                {error && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11, padding: "0 20px", textAlign: "center" }}>⚠ {error}</div>}
+                {!loading && !error && chartData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <ComposedChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
+                      <defs>
+                        <linearGradient id="posGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#16c784" stopOpacity={0.22} />
+                          <stop offset="95%" stopColor="#16c784" stopOpacity={0.01} />
+                        </linearGradient>
+                        <linearGradient id="negGrad" x1="0" y1="1" x2="0" y2="0">
+                          <stop offset="5%" stopColor="#ea3943" stopOpacity={0.22} />
+                          <stop offset="95%" stopColor="#ea3943" stopOpacity={0.01} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
+                      <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+                      <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={60} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <ReferenceLine y={0} stroke="var(--text)" strokeWidth={0.8} />
+                      <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
+                      <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
+                      <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "var(--bg)", strokeWidth: 2 }} />
+                      {showMA && activeWinList.map((w, i) => {
+                        const color = MA_COLORS[i % MA_COLORS.length];
+                        return (
+                          <Line key={w.key} type="monotone" dataKey={w.key} stroke={color} strokeWidth={1.5 + i * 0.3} dot={false} isAnimationActive={false} connectNulls />
+                        );
+                      })}
+                      {dayBoundaries.map(t => (
+                        <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6"
+                          label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "bottom", fill: "var(--text-muted)", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
+                        />
+                      ))}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                )}
+                {!loading && !error && data.length === 0 && (
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 10 }}>Select a market</div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* ── Hyperliquid Market Data ── */}
+      {hlMarket && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#4a9eff" }}>Hyperliquid</span>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{hlMarket.coin}-PERP</span>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 8, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "1px 5px", color: "#4a9eff77" }}>max {hlMarket.maxLeverage}x</span>
+          </div>
+
+          {/* Key metrics */}
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+            {[
+              { label: "Open Interest", value: hlMarket.openInterestUsd, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K") },
+              { label: "Volume 24h", value: hlMarket.dayNtlVlm, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K") },
+              { label: "Mark Price", value: hlMarket.markPx, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
+              { label: "Oracle Price", value: hlMarket.oraclePx, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
+              { label: "Funding (1h)", value: hlMarket.funding, fmt: v => (v >= 0 ? "+" : "") + (v * 100).toFixed(4) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+              { label: "Premium", value: hlMarket.premium, fmt: v => (v >= 0 ? "+" : "") + (v * 100).toFixed(3) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+            ].filter(m => m.value != null).map(m => (
+              <div key={m.label} style={{ minWidth: 80 }}>
+                <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 }}>{m.label}</div>
+                <div style={{ fontSize: 10, fontWeight: 500, color: m.color ? m.color(m.value) : "var(--text)" }}>{m.fmt(m.value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Orderbook liquidity analysis */}
+          {hlMarket.orderbook && (
+            <>
+              <div style={{ fontSize: 8, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
+                Liquidity Analysis — Spread: {(hlMarket.orderbook.spreadBps / 100).toFixed(3)}%
+              </div>
+
+              {/* Price impact table */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Price Impact (slippage)</div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                        <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>SIZE</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>BUY</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>SELL</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>AVG</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hlMarket.orderbook.impacts.map(imp => {
+                        const slipColor = (pct) => pct < 0.05 ? "#16c784" : pct < 0.2 ? "#f0b90b" : pct < 0.5 ? "#ff8fa0" : "#ea3943";
+                        return (
+                          <tr key={imp.sizeUsd} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                            <td style={{ padding: "3px 6px", color: "var(--text)" }}>${(imp.sizeUsd / 1000).toFixed(0)}K</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", color: slipColor(imp.buySlippageBps / 100) }}>{(imp.buySlippageBps / 100).toFixed(3)}%</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", color: slipColor(imp.sellSlippageBps / 100) }}>{(imp.sellSlippageBps / 100).toFixed(3)}%</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", fontWeight: 600, color: slipColor(imp.avgSlippageBps / 100) }}>{(imp.avgSlippageBps / 100).toFixed(3)}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Depth */}
+                <div style={{ minWidth: 160 }}>
+                  <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Order Book Depth</div>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                        <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>RANGE</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>BIDS</th>
+                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>ASKS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {hlMarket.orderbook.depth.map(d => {
+                        const fmtUsd = v => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K";
+                        return (
+                          <tr key={d.bps} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                            <td style={{ padding: "3px 6px", color: "var(--text-muted)" }}>+/-{(d.bps / 100).toFixed(1)}%</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", color: "#16c784" }}>${fmtUsd(d.bidUsd)}</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", color: "#ea3943" }}>${fmtUsd(d.askUsd)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       )}
 
-      {/* Chart */}
-      {(() => {
-        const dayBoundaries = [];
-        for (let i = 1; i < data.length; i++) {
-          const prevDay = new Date(data[i-1].time).toDateString();
-          const currDay = new Date(data[i].time).toDateString();
-          if (currDay !== prevDay) dayBoundaries.push(data[i].time);
-        }
-        return (
-          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 4px 10px", height: 320, display: "flex", flexDirection: "column", marginBottom: 12, overflow: "hidden", minWidth: 0, width: "100%" }}>
-            {loading && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>⟳ {loadingMsg}</div>}
-            {error && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11, padding: "0 20px", textAlign: "center" }}>⚠ {error}</div>}
-            {!loading && !error && data.length > 0 && (
-              <ResponsiveContainer width="100%" height={260}>
-                <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
-                  <defs>
-                    <linearGradient id="posGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#16c784" stopOpacity={0.22} />
-                      <stop offset="95%" stopColor="#16c784" stopOpacity={0.01} />
-                    </linearGradient>
-                    <linearGradient id="negGrad" x1="0" y1="1" x2="0" y2="0">
-                      <stop offset="5%" stopColor="#ea3943" stopOpacity={0.22} />
-                      <stop offset="95%" stopColor="#ea3943" stopOpacity={0.01} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
-                  <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-                  <YAxis tickFormatter={v2 => v2.toFixed(4) + "%"} tick={{ fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }} tickLine={false} axisLine={false} width={68} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <ReferenceLine y={0} stroke="var(--text)" strokeWidth={0.8} />
-                  <Area type="monotone" dataKey="ratePos" fill="url(#posGrad)" stroke="none" />
-                  <Area type="monotone" dataKey="rateNeg" fill="url(#negGrad)" stroke="none" />
-                  <Line type="monotone" dataKey="rate" stroke={venueInfo?.color ?? "#4a9eff"} strokeWidth={1.2} dot={false} activeDot={{ r: 3, fill: venueInfo?.color ?? "#4a9eff", stroke: "var(--bg)", strokeWidth: 2 }} />
-                  {dayBoundaries.map(t => (
-                    <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6"
-                      label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "bottom", fill: "var(--text-muted)", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
-                    />
-                  ))}
-                </ComposedChart>
-              </ResponsiveContainer>
+      {/* ── Market Info (CoinGecko) ── */}
+      {coinInfo && coinInfo.found && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            {coinInfo.image && <img src={coinInfo.image} alt="" style={{ width: 20, height: 20, borderRadius: 4 }} />}
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{coinInfo.name}</span>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{coinInfo.symbol}</span>
+            {coinInfo.marketCapRank && <span style={{ fontSize: 8, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "1px 5px", color: "#4a9eff77" }}>#{coinInfo.marketCapRank}</span>}
+            <div style={{ flex: 1 }} />
+            {coinInfo.currentPrice != null && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>${coinInfo.currentPrice.toLocaleString("en", { maximumFractionDigits: coinInfo.currentPrice < 1 ? 6 : 2 })}</span>
             )}
+            {coinInfo.priceChange24h != null && (
+              <span style={{ fontSize: 10, color: coinInfo.priceChange24h >= 0 ? "#16c784" : "#ea3943", fontWeight: 500 }}>
+                {coinInfo.priceChange24h >= 0 ? "+" : ""}{coinInfo.priceChange24h.toFixed(2)}%
+              </span>
+            )}
+          </div>
+
+          {/* Key metrics row */}
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+            {[
+              { label: "Market Cap", value: coinInfo.marketCap, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(0) + "M" : v.toLocaleString()) },
+              { label: "Volume 24h", value: coinInfo.totalVolume24h, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(0) + "M" : v.toLocaleString()) },
+              { label: "7d", value: coinInfo.priceChange7d, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+              { label: "30d", value: coinInfo.priceChange30d, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+              { label: "ATH", value: coinInfo.ath, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
+              { label: "Circ. Supply", value: coinInfo.circulatingSupply, fmt: v => (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v.toLocaleString()) },
+            ].filter(m => m.value != null).map(m => (
+              <div key={m.label} style={{ minWidth: 70 }}>
+                <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 }}>{m.label}</div>
+                <div style={{ fontSize: 10, fontWeight: 500, color: m.color ? m.color(m.value) : "var(--text)" }}>{m.fmt(m.value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Description */}
+          {coinInfo.description && (
+            <div style={{ fontSize: 9, color: "var(--text-dim)", lineHeight: 1.5, marginBottom: 12, maxHeight: 40, overflow: "hidden" }}>
+              {coinInfo.description.replace(/<[^>]*>/g, "")}
+            </div>
+          )}
+
+          {/* Spot exchanges */}
+          {coinInfo.spotExchanges?.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 8, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Buy Spot</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {coinInfo.spotExchanges.map(ex => (
+                  <a key={ex.name} href={ex.tradeUrl || "#"} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 9, padding: "3px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", textDecoration: "none", cursor: "pointer" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#4a9eff"; e.currentTarget.style.color = "#4a9eff"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
+                  >
+                    {ex.name}
+                    {ex.volume24h != null && <span style={{ color: "var(--text-muted)", marginLeft: 4, fontSize: 8 }}>${ex.volume24h >= 1e6 ? (ex.volume24h / 1e6).toFixed(0) + "M" : (ex.volume24h / 1e3).toFixed(0) + "K"}</span>}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Derivatives exchanges */}
+          {coinInfo.derivExchanges?.length > 0 && (
+            <div>
+              <div style={{ fontSize: 8, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Derivatives (Perps)</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {coinInfo.derivExchanges.map(ex => (
+                  <a key={ex.name} href={ex.tradeUrl || "#"} target="_blank" rel="noopener noreferrer"
+                    style={{ fontSize: 9, padding: "3px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", textDecoration: "none" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#a78bfa"; e.currentTarget.style.color = "#a78bfa"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
+                  >{ex.name}</a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {coinInfoLoading && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: 16, marginTop: 14, textAlign: "center", color: "#4a9eff", fontSize: 10 }}>
+          Loading market info...
+        </div>
+      )}
+      {coinInfo && !coinInfo.found && !coinInfoLoading && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 16px", marginTop: 14, fontSize: 9, color: "var(--text-muted)" }}>
+          No market info found for {coin} on CoinGecko
+        </div>
+      )}
+
+      {/* ── Structural Funding Analysis ── */}
+      {/* ── Structural Funding ── */}
+      {structuralMAs.length > 0 && (() => {
+        const meanAPR = structuralMAs.reduce((s, m) => s + m.ma, 0) / structuralMAs.length * freq;
+        const thStyle = { textAlign: "center", padding: "4px 4px", color: "var(--text-label)", fontWeight: 500, fontSize: 7, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
+        const tdStyle = { textAlign: "center", padding: "3px 4px", fontSize: 9, whiteSpace: "nowrap" };
+        return (
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+              Structural Funding — {coin}
+            </div>
+
+            {/* Horizontal MA table: 19 period columns + Mean */}
+            <div style={{ overflowX: "auto", marginBottom: 14 }}>
+              <table style={{ borderCollapse: "collapse", fontFamily: "'IBM Plex Mono', monospace", minWidth: structuralMAs.length * 52 }}>
+                <thead>
+                  <tr>
+                    {structuralMAs.map(m => (
+                      <th key={m.days} style={thStyle}>{m.days}d</th>
+                    ))}
+                    <th style={{ ...thStyle, color: "#4a9eff", borderLeft: "1px solid var(--border)" }}>Mean</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    {structuralMAs.map(m => {
+                      const apr = m.ma * freq;
+                      return (
+                        <td key={m.days} style={{ ...tdStyle, color: apr >= 0 ? "#16c784" : "#ea3943", fontWeight: 600 }}>
+                          {apr >= 0 ? "+" : ""}{apr.toFixed(1)}%
+                        </td>
+                      );
+                    })}
+                    <td style={{ ...tdStyle, color: meanAPR >= 0 ? "#16c784" : "#ea3943", fontWeight: 600, borderLeft: "1px solid var(--border)" }}>
+                      {meanAPR >= 0 ? "+" : ""}{meanAPR.toFixed(1)}%
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* MA Curve Chart */}
+            <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>MA Curve (1d → {structuralMAs[structuralMAs.length - 1].days}d)</div>
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={structuralMAs.map(m => ({ days: m.days + "d", apr: m.ma * freq }))} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
+                <XAxis dataKey="days" tick={{ fontSize: 8, fill: "var(--text-muted)" }} />
+                <YAxis tickFormatter={v => v.toFixed(1) + "%"} tick={{ fontSize: 8, fill: "var(--text-muted)" }} />
+                <Tooltip content={({ active, payload }) => {
+                  if (!active || !payload?.[0]) return null;
+                  const d = payload[0].payload;
+                  return (
+                    <div style={{ background: "var(--bg-alt)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 8px", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+                      <div style={{ color: "var(--text-muted)" }}>Horizon: {d.days}</div>
+                      <div style={{ color: d.apr >= 0 ? "#16c784" : "#ea3943", fontWeight: 600 }}>APR: {d.apr.toFixed(2)}%</div>
+                    </div>
+                  );
+                }} />
+                <ReferenceLine y={0} stroke="var(--text-muted)" strokeWidth={0.5} />
+                <ReferenceLine y={meanAPR} stroke="#4a9eff" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "Mean " + meanAPR.toFixed(1) + "%", fill: "#4a9eff", fontSize: 8, position: "right" }} />
+                <Line type="monotone" dataKey="apr" stroke="#4a9eff" strokeWidth={2} dot={{ r: 2.5, fill: "#4a9eff" }} activeDot={{ r: 4 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
           </div>
         );
       })()}
 
-      {/* Table */}
-      {data.length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          <button onClick={() => { setShowTable(v2 => !v2); setTablePage(0); }} style={{ background: showTable ? "#4a9eff22" : "transparent", border: "1px solid var(--border)", borderRadius: 4, color: showTable ? "#4a9eff" : "#bbb", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            {showTable ? "▲ Hide" : "▼ Display the funding fee history"}
-          </button>
-        </div>
-      )}
-      {showTable && data.length > 0 && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 360 }}>
-              <thead>
-                <tr style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
-                  {["Date","Time","Rate","Premium","APR"].map(h => (
-                    <th key={h} style={{ padding: "9px 12px", textAlign: "left", color: "var(--text-label)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageData.map((row) => {
-                  const p = row.rate >= 0; const d = new Date(row.time);
-                  return (
-                    <tr key={row.time}
-                      style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-card)" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "var(--bg-alt)"}
-                      onMouseLeave={e => e.currentTarget.style.background = "var(--bg-card)"}
-                    >
-                      <td style={{ padding: "6px 12px", color: "var(--text-dim)" }}>{d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
-                      <td style={{ padding: "6px 12px", color: "var(--text-muted)" }}>{d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</td>
-                      <td style={{ padding: "6px 12px", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtRate(row.rawRate)}</td>
-                      <td style={{ padding: "6px 12px", color: "var(--text-muted)" }}>{(parseFloat(row.rawPremium) * 100).toFixed(4)}%</td>
-                      <td style={{ padding: "6px 12px", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtAPR(row.apr)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border)", alignItems: "center", background: "var(--bg-card)" }}>
-            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage === 0 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
-            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{tablePage + 1} / {totalPages}</span>
-            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage >= totalPages - 1 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
-            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: "auto" }}>{tableData.length} entries</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1275,11 +1749,10 @@ function aprColor(v) {
   return "#ff4d6d";
 }
 
-function ArbitragePage({ onNavigate }) {
+function ArbitragePage({ selectedVenues, onNavigate }) {
   const [venueData, setVenueData]       = useState({});
   const [loadingVenues, setLoadingVenues] = useState(new Set());
   const [progressMap, setProgressMap]   = useState({});
-  const [selectedVenues, setSelectedVenues] = useState(new Set(["hl", "bn", "by"]));
   const [sortCol, setSortCol] = useState("hl_bn");
   const [sortDir, setSortDir] = useState(-1);
   const [leverage, setLeverage] = useState(1);
@@ -1327,25 +1800,10 @@ function ArbitragePage({ onNavigate }) {
     setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
   }, []);
 
+  // Load data for each selected venue
   useEffect(() => {
-    ["hl", "bn", "by"].forEach(vid => loadVenue(vid));
-  }, [loadVenue]);
-
-  const toggleVenue = (vid) => {
-    setSelectedVenues(prev => {
-      const next = new Set(prev);
-      if (next.has(vid)) {
-        if (next.size === 1) return next;
-        next.delete(vid);
-        // Reset sortCol if it involves the removed venue
-        setSortCol(sc => sc.includes(vid) ? "hl_bn" : sc);
-      } else {
-        next.add(vid);
-        loadVenue(vid);
-      }
-      return next;
-    });
-  };
+    for (const vid of selectedVenues) loadVenue(vid);
+  }, [selectedVenues, loadVenue]);
 
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => -d);
@@ -1417,53 +1875,53 @@ function ArbitragePage({ onNavigate }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      <div style={{ marginBottom: 12 }}>
-        <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
-          Spread<span style={{ color: "#4a9eff" }}> · cross-exchange</span>
-        </h2>
-        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
-          Funding spread arb — short the highest, long the lowest · spread APR × leverage
+      <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
+            Find The Highest Spread
+          </h2>
+          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
+            Spot Cross-Exchange Funding Rate Arbitrage Opportunities
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => { selVenues.forEach(v => { loadedRef.current[v.id] = false; setVenueData(prev => ({ ...prev, [v.id]: undefined })); loadVenue(v.id); }); }} disabled={isLoading} style={{
+            background: isLoading ? "transparent" : "#4a9eff22", border: `1px solid ${isLoading ? "var(--border)" : "#4a9eff"}`,
+            borderRadius: 4, color: isLoading ? "var(--text-muted)" : "#4a9eff",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+            padding: "6px 14px", cursor: isLoading ? "default" : "pointer", letterSpacing: "0.08em",
+          }}>⟳ REFRESH</button>
+          {isLoading && (
+            <button onClick={() => SPREAD_VENUES.forEach(v => { abortRefs.current[v.id] = true; })} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "6px 12px", cursor: "pointer" }}>■ STOP</button>
+          )}
         </div>
       </div>
 
-      {/* Controls encadré */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-        {/* Venue row */}
+      {/* Top spread opportunities */}
+      {sorted.length > 0 && spreadPairs.length > 0 && (() => {
+        const top5 = [...withSpreads]
+          .map(row => {
+            const maxSpread = Math.max(...spreadPairs.map(p => row[p.key] ?? 0));
+            return { ...row, _maxSpread: maxSpread };
+          })
+          .sort((a, b) => b._maxSpread - a._maxSpread)
+          .slice(0, 5);
+        return <TopAssetsBar items={top5.map(r => ({ label: r.coin, value: r._maxSpread * leverage, sub: `Max spread ${period}d` }))} />;
+      })()}
+
+      {/* Controls: Period + Leverage */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
-          {SPREAD_VENUES.map(v2 => {
-            const active = selectedVenues.has(v2.id);
-            const loading2 = loadingVenues.has(v2.id);
-            const prog = progressMap[v2.id];
-            return (
-              <button key={v2.id} onClick={() => toggleVenue(v2.id)} style={btnStyle(active, v2.color)}>
-                {v2.label}{loading2 && prog ? ` (${prog.done}/${prog.total})` : ""}
-              </button>
-            );
-          })}
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button onClick={() => { selVenues.forEach(v => { loadedRef.current[v.id] = false; setVenueData(prev => ({ ...prev, [v.id]: undefined })); loadVenue(v.id); }); }} disabled={isLoading} style={btnStyle(!isLoading)}>⟳ REFRESH</button>
-            {isLoading && (
-              <button onClick={() => SPREAD_VENUES.forEach(v => { abortRefs.current[v.id] = true; })} style={{ background: "#ff4d6d22", border: "1px solid #ff4d6d44", borderRadius: 4, color: "#ff4d6d", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 12px", cursor: "pointer" }}>■ STOP</button>
-            )}
-          </div>
-        </div>
-        {/* Period row */}
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Period</span>
           {[["7","7d"],["30","30d"],["90","90d"]].map(([val, label]) => (
             <button key={val} onClick={() => setPeriod(val)} style={btnStyle(period === val)}>{label}</button>
           ))}
-        </div>
-        {/* Leverage row */}
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 60, flexShrink: 0 }}>Leverage</span>
-          {[1, 3, 6].map(l => (
-            <button key={l} onClick={() => setLeverage(l)} style={btnStyle(leverage === l)}>{l}×</button>
-          ))}
-          {leverage > 1 && (
-            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>spread APR = |rate_a − rate_b| × {leverage} / 2</span>
-          )}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Leverage</span>
+            <input type="range" min={1} max={10} step={1} value={leverage} onChange={e => setLeverage(Number(e.target.value))}
+              style={{ width: 100, accentColor: "#4a9eff", cursor: "pointer" }} />
+            <span style={{ fontSize: 11, color: "#4a9eff", fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", minWidth: 28 }}>{leverage}×</span>
+          </div>
         </div>
       </div>
 
@@ -1636,17 +2094,38 @@ async function fetchBorosMarkets() {
   }).sort((a, b) => a.maturity - b.maturity);
 }
 
-function BorosPage() {
+function BorosPage({ venue: venueProp }) {
+  const isMobile = useIsMobile();
   const [markets, setMarkets]           = useState(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState(null);
   const [sortCol, setSortCol]           = useState("longYU");
   const [sortDir, setSortDir]           = useState(-1);
   const [period, setPeriod]             = useState("live");      // "live" | "7d" | "30d"
-  const [selectedVenue, setSelectedVenue] = useState("hl");
   const [fundingAvgs, setFundingAvgs]   = useState({});          // { coin: { apr7, apr30 } }
   const [impliedAvgs, setImpliedAvgs]   = useState({});          // { marketKey: impliedApr7dAvg }
   const [fundingLoading, setFundingLoading] = useState(false);
+  const [borosLeverage, setBorosLeverage]   = useState(1);
+  const [selectedMarket, setSelectedMarket] = useState(null);   // selected row coin key
+  const [chartData, setChartData]           = useState([]);
+  const [chartLoading, setChartLoading]     = useState(false);
+
+  // Derive available venues from platforms present in Boros markets data
+  const platformToVenueId = { hyperliquid: "hl", binance: "bn", bybit: "by", okx: "okx", dydx: "dy", lighter: "lt", asterdex: "ad" };
+  const availableVenueIds = useMemo(() => {
+    if (!markets || !markets.length) return ["hl"];
+    const ids = new Set();
+    markets.forEach(m => {
+      const key = m.platform.toLowerCase();
+      for (const [k, id] of Object.entries(platformToVenueId)) {
+        if (key.includes(k)) { ids.add(id); break; }
+      }
+    });
+    return ids.size ? [...ids] : ["hl"];
+  }, [markets]);
+  const availableVenues = VENUES.filter(v => availableVenueIds.includes(v.id));
+  const selectedVenue = availableVenueIds.includes(venueProp) ? venueProp : availableVenueIds[0];
+  const venueObj = VENUES.find(v => v.id === selectedVenue) ?? availableVenues[0] ?? VENUES[0];
 
   // Fetch Boros markets once
   useEffect(() => {
@@ -1677,6 +2156,24 @@ function BorosPage() {
       })
       .catch(() => setFundingLoading(false));
   }, [markets, selectedVenue]);
+
+  // Fetch chart data when a market row is selected
+  useEffect(() => {
+    if (!selectedMarket) { setChartData([]); return; }
+    const coin = selectedMarket;
+    const vid = selectedVenue;
+    const freq = VENUE_FREQ[vid];
+    setChartLoading(true);
+    apiFetchHistory(vid, coin, 30).then(raw => {
+      if (!raw || !raw.length) { setChartData([]); setChartLoading(false); return; }
+      const pts = raw.map(d => ({
+        time: d.time,
+        funding: parseFloat(d.fundingRate) * 100 * freq,
+      }));
+      setChartData(pts);
+      setChartLoading(false);
+    }).catch(() => { setChartData([]); setChartLoading(false); });
+  }, [selectedMarket, selectedVenue]);
 
   // Normalize to % (Boros returns decimals like 0.035 = 3.5%)
   const toPercent = v => (v === null || v === undefined) ? null : v * 100;
@@ -1754,32 +2251,16 @@ function BorosPage() {
     else { setSortCol(col); setSortDir(-1); }
   };
 
-  // Derive available venues from platforms present in Boros markets data
-  const platformToVenueId = { hyperliquid: "hl", binance: "bn", bybit: "by", okx: "okx", dydx: "dy", lighter: "lt", asterdex: "ad" };
-  const availableVenueIds = useMemo(() => {
-    if (!markets || !markets.length) return ["hl"];
-    const ids = new Set();
-    markets.forEach(m => {
-      const key = m.platform.toLowerCase();
-      for (const [k, id] of Object.entries(platformToVenueId)) {
-        if (key.includes(k)) { ids.add(id); break; }
-      }
-    });
-    return ids.size ? [...ids] : ["hl"];
-  }, [markets]);
-
-  // Auto-correct selectedVenue if it's not available
+  // Auto-select best market when data loads and nothing is selected
   useEffect(() => {
-    if (!availableVenueIds.includes(selectedVenue)) {
-      setSelectedVenue(availableVenueIds[0]);
+    if (!selectedMarket && sorted.length > 0) {
+      const best = [...sorted].filter(r => r.longYU != null).sort((a, b) => b.longYU - a.longYU)[0];
+      if (best) setSelectedMarket(best.coin);
     }
-  }, [availableVenueIds, selectedVenue]);
+  }, [sorted, selectedMarket]);
 
-  const availableVenues = VENUES.filter(v => availableVenueIds.includes(v.id));
-
-  const venueObj = VENUES.find(v => v.id === selectedVenue) ?? availableVenues[0] ?? VENUES[0];
-  const underlyingLabel = period === "live" ? "UNDERLYING APR" : period === "7d" ? `UNDERLYING 7D (${venueObj.label})` : `UNDERLYING 30D (${venueObj.label})`;
-  const impliedLabel = period === "live" ? "IMPLIED APR" : period === "7d" ? "IMPLIED 7D AVG" : "IMPLIED APR (live)";
+  const underlyingLabel = period === "live" ? "FUNDING RATE" : period === "7d" ? "FUNDING RATE 7D" : "FUNDING RATE 30D";
+  const impliedLabel = period === "live" ? "FIXED RATE" : period === "7d" ? "FIXED RATE 7D AVG" : "FIXED RATE (live)";
 
   const PERIOD_BTNS = [
     { id: "live", label: "Live" },
@@ -1791,72 +2272,50 @@ function BorosPage() {
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
       <div style={{ marginBottom: 12 }}>
         <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
-          Hedge<span style={{ color: "#4a9eff" }}> · fixed rate</span>
+          Funding Rate Swap
         </h2>
         <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>
-          Boros implied APR vs underlying funding rate · lock your funding cost at a fixed rate
+          Compare Boros' Fixed Rate (Implied Rate) To The Variable Funding Rate To Find The Best Swaps
         </div>
       </div>
 
-      {/* Strategy info box */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 16px", marginBottom: 14, fontSize: 10, color: "var(--text-dim)", lineHeight: 1.7 }}>
-        <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 6, fontSize: 11 }}>How to hedge funding rate exposure</div>
-        <div>
-          <span style={{ color: "#00d4aa", fontWeight: 600 }}>LONG YU on Boros</span>
-          {" "}→ pay fixed Implied APR, receive floating Underlying APR · benefit = Underlying − Implied
-        </div>
-        <div>
-          <span style={{ color: "#ff4d6d", fontWeight: 600 }}>SHORT YU on Boros</span>
-          {" "}→ receive fixed Implied APR, pay floating Underlying APR · benefit = Implied − Underlying
-        </div>
-      </div>
+      {/* Top yield opportunities */}
+      {!loading && !error && sorted.length > 0 && (() => {
+        const top5 = [...sorted].filter(r => r.longYU != null).sort((a, b) => b.longYU - a.longYU).slice(0, 5);
+        return <TopAssetsBar
+          items={top5.map(r => ({ label: r.coin, value: r.longYU, sub: "Long YU" }))}
+          activeLabel={selectedMarket}
+          onSelect={c => setSelectedMarket(selectedMarket === c ? null : c)}
+        />;
+      })()}
 
-      {/* Controls: venue + period */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
-        {/* Venue selector */}
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em", marginBottom: 6 }}>UNDERLYING VENUE</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {availableVenues.map(v => {
-              const active = selectedVenue === v.id;
-              return (
-                <button key={v.id} onClick={() => setSelectedVenue(v.id)}
-                  style={{
-                    padding: "5px 10px", fontSize: 10, fontWeight: active ? 600 : 400,
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    background: active ? v.color + "22" : "transparent",
-                    border: `1px solid ${active ? v.color : "var(--border)"}`,
-                    borderRadius: 6, color: active ? v.color : "var(--text-dim)",
-                    cursor: "pointer", transition: "all 0.15s",
-                  }}>
-                  {v.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Period selector */}
-        <div>
-          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em", marginBottom: 6 }}>PERIOD</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {PERIOD_BTNS.map(p => {
-              const active = period === p.id;
-              return (
-                <button key={p.id} onClick={() => setPeriod(p.id)}
-                  style={{
-                    padding: "5px 14px", fontSize: 10, fontWeight: active ? 600 : 400,
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    background: active ? "#4a9eff22" : "transparent",
-                    border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
-                    borderRadius: 6, color: active ? "#4a9eff" : "var(--text-dim)",
-                    cursor: "pointer", transition: "all 0.15s",
-                  }}>
-                  {p.label}
-                </button>
-              );
-            })}
-            {fundingLoading && <span style={{ fontSize: 9, color: "var(--text-muted)", alignSelf: "center", marginLeft: 6 }}>loading…</span>}
+      {/* Controls: period + leverage */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Period</span>
+          {PERIOD_BTNS.map(p => {
+            const active = period === p.id;
+            return (
+              <button key={p.id} onClick={() => setPeriod(p.id)}
+                style={{
+                  boxSizing: "border-box",
+                  padding: "5px 12px", fontSize: 10, fontWeight: active ? 600 : 400,
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  background: active ? "#4a9eff22" : "transparent",
+                  border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
+                  borderRadius: 4, color: active ? "#4a9eff" : "var(--text-dim)",
+                  cursor: "pointer", letterSpacing: "0.05em",
+                }}>
+                {p.label}
+              </button>
+            );
+          })}
+          {fundingLoading && <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 6 }}>loading…</span>}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Leverage</span>
+            <input type="range" min={1} max={10} step={1} value={borosLeverage} onChange={e => setBorosLeverage(Number(e.target.value))}
+              style={{ width: 100, accentColor: "#4a9eff", cursor: "pointer" }} />
+            <span style={{ fontSize: 11, color: "#4a9eff", fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace", minWidth: 28 }}>{borosLeverage}×</span>
           </div>
         </div>
       </div>
@@ -1885,40 +2344,100 @@ function BorosPage() {
         </div>
       )}
 
+      {/* Table + Chart side-by-side (desktop) or stacked (mobile) */}
       {!loading && !error && sorted.length > 0 && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
-              <thead>
-                <tr style={{ background: "var(--bg-alt)" }}>
-                  <th style={thStyle("coin")}       onClick={() => handleSort("coin")}>ASSET {sortCol === "coin"       ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("implied")}    onClick={() => handleSort("implied")}>{impliedLabel} {sortCol === "implied"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("underlying")} onClick={() => handleSort("underlying")}>{underlyingLabel} {sortCol === "underlying" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("longYU")}     onClick={() => handleSort("longYU")}>LONG YU {sortCol === "longYU"     ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle("shortYU")}    onClick={() => handleSort("shortYU")}>SHORT YU {sortCol === "shortYU"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((m, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--bg-alt)" }}>
-                    <td style={{ ...tdStyle("left"), fontWeight: 600, color: "#4a9eff" }}>
-                      {m.coin || m.name}{m.collateral ? <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>-{m.collateral}</span> : ""}
-                      {m.maturity ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: 9, marginLeft: 6 }}>{fmtDate(m.maturity)}</span> : ""}
-                    </td>
-                    <td style={{ ...tdStyle(), color: aprColor(m.implied) }}>{fmtPct(m.implied)}</td>
-                    <td style={{ ...tdStyle(), color: aprColor(m.underlying) }}>{fmtPct(m.underlying)}</td>
-                    <td style={{ ...tdStyle(), color: yuColor(m.longYU),  fontWeight: 600 }}>{fmtPct(m.longYU)}</td>
-                    <td style={{ ...tdStyle(), color: yuColor(m.shortYU), fontWeight: 600 }}>{fmtPct(m.shortYU)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14 }}>
+          {/* Table — left */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg-alt)" }}>
+                      <th style={thStyle("coin")}       onClick={() => handleSort("coin")}>ASSET {sortCol === "coin"       ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                      <th style={thStyle("implied")}    onClick={() => handleSort("implied")}>{impliedLabel} {sortCol === "implied"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                      <th style={thStyle("underlying")} onClick={() => handleSort("underlying")}>{underlyingLabel} {sortCol === "underlying" ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                      <th style={thStyle("longYU")}     onClick={() => handleSort("longYU")}>LONG YU {sortCol === "longYU"     ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                      <th style={thStyle("shortYU")}    onClick={() => handleSort("shortYU")}>SHORT YU {sortCol === "shortYU"    ? (sortDir < 0 ? "↓" : "↑") : ""}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sorted.map((m, i) => {
+                      const isSelected = selectedMarket === m.coin;
+                      return (
+                      <tr key={i} onClick={() => setSelectedMarket(isSelected ? null : m.coin)}
+                        style={{ background: isSelected ? "#4a9eff18" : i % 2 === 0 ? "transparent" : "var(--bg-alt)", cursor: "pointer", transition: "background 0.15s" }}>
+                        <td style={{ ...tdStyle("left"), fontWeight: 600, color: isSelected ? "#4a9eff" : "#4a9eff" }}>
+                          {m.coin || m.name}{m.collateral ? <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>-{m.collateral}</span> : ""}
+                          {m.maturity ? <span style={{ color: "var(--border)", fontWeight: 400, fontSize: 9, marginLeft: 6 }}>{fmtDate(m.maturity)}</span> : ""}
+                        </td>
+                        <td style={{ ...tdStyle(), color: aprColor(m.implied) }}>{fmtPct(m.implied)}</td>
+                        <td style={{ ...tdStyle(), color: aprColor(m.underlying) }}>{fmtPct(m.underlying)}</td>
+                        <td style={{ ...tdStyle(), color: yuColor(m.longYU),  fontWeight: 600 }}>{fmtPct(m.longYU)}</td>
+                        <td style={{ ...tdStyle(), color: yuColor(m.shortYU), fontWeight: 600 }}>{fmtPct(m.shortYU)}</td>
+                      </tr>
+                      ); })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ padding: "8px 12px", fontSize: 9, color: "var(--text-muted)", borderTop: "1px solid var(--border-dim)", display: "flex", justifyContent: "space-between" }}>
+                <span>{sorted.length} active market{sorted.length !== 1 ? "s" : ""} · funding rate: {venueObj.label}{period !== "live" ? ` ${period} avg` : " live"}</span>
+                <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer"
+                  style={{ color: "#a855f7", textDecoration: "none" }}>↗ boros.pendle.finance</a>
+              </div>
+            </div>
           </div>
-          <div style={{ padding: "8px 12px", fontSize: 9, color: "var(--text-muted)", borderTop: "1px solid var(--border-dim)", display: "flex", justifyContent: "space-between" }}>
-            <span>{sorted.length} active market{sorted.length !== 1 ? "s" : ""} · underlying: {venueObj.label}{period !== "live" ? ` ${period} avg` : " live"}</span>
-            <a href="https://boros.pendle.finance" target="_blank" rel="noreferrer"
-              style={{ color: "#a855f7", textDecoration: "none" }}>↗ boros.pendle.finance</a>
-          </div>
+
+          {/* Chart — right (desktop fixed width, mobile full width) */}
+          {selectedMarket && (
+            <div style={{ width: isMobile ? "100%" : 380, flexShrink: 0 }}>
+              <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "16px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#4a9eff" }}>{selectedMarket}</span>
+                    <span style={{ fontSize: 9, color: "var(--text-dim)", marginLeft: 8 }}>30d funding vs fixed · {venueObj.label}</span>
+                  </div>
+                  <button onClick={() => setSelectedMarket(null)}
+                    style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-dim)", fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace" }}>
+                    ✕
+                  </button>
+                </div>
+                {chartLoading ? (
+                  <div style={{ textAlign: "center", color: "var(--text-dim)", fontSize: 10, padding: "24px 0" }}>Loading chart data…</div>
+                ) : chartData.length === 0 ? (
+                  <div style={{ textAlign: "center", color: "var(--text-dim)", fontSize: 10, padding: "24px 0" }}>No historical data available</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border-dim)" />
+                      <XAxis dataKey="time" tickFormatter={t => new Date(t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })}
+                        tick={{ fontSize: 9, fill: "var(--text-dim)" }} stroke="var(--border)" />
+                      <YAxis tickFormatter={v => v.toFixed(0) + "%"}
+                        tick={{ fontSize: 9, fill: "var(--text-dim)" }} stroke="var(--border)" />
+                      <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
+                      <Tooltip
+                        contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}
+                        labelFormatter={t => new Date(t).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        formatter={(val, name) => {
+                          const color = name === "funding" ? "#4a9eff" : "#a855f7";
+                          const label = name === "funding" ? "Funding Rate" : "Fixed Rate";
+                          return [<span style={{ color }}>{val.toFixed(2)}%</span>, label];
+                        }}
+                      />
+                      <Line type="monotone" dataKey="funding" stroke="#4a9eff" strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                      {(() => {
+                        const sel = withComputed.find(m => m.coin === selectedMarket);
+                        const fixedRate = sel?.implied;
+                        if (fixedRate == null) return null;
+                        return <ReferenceLine y={fixedRate} stroke="#a855f7" strokeWidth={1.5} strokeDasharray="6 3"
+                          label={{ value: `Fixed ${fmtPct(fixedRate)}`, position: "right", fill: "#a855f7", fontSize: 9 }} />;
+                      })()}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1926,15 +2445,13 @@ function BorosPage() {
 }
 
 // ── COMPARE ───────────────────────────────────────────────────────────────────
-function ComparePage({ onNavigate }) {
+function ComparePage({ selectedVenues, category: filterCat, onNavigate }) {
   // Per-venue data storage: { hl: [{coin, cat, apr7, apr30, apr90}], bn: [...], by: [...] }
   const [venueData, setVenueData] = useState({ hl: null, bn: null, by: null, ad: null });
   const [loadingVenues, setLoadingVenues] = useState(new Set());
   const [progressMap, setProgressMap] = useState({});
-  const [selectedVenues, setSelectedVenues] = useState(new Set(["hl"]));
   const [sortCol, setSortCol] = useState("hl_apr30");
   const [sortDir, setSortDir] = useState(-1);
-  const [filterCat, setFilterCat] = useState("All");
   const abortRefs = useRef({ hl: false, bn: false, by: false, ad: false });
   const loadedRef = useRef({ hl: false, bn: false, by: false, ad: false });
 
@@ -1998,22 +2515,6 @@ function ComparePage({ onNavigate }) {
     setLoadingVenues(prev => { const s = new Set(prev); s.delete(vid); return s; });
   }, []);
 
-  const toggleVenue = (vid) => {
-    setSelectedVenues(prev => {
-      const next = new Set(prev);
-      if (next.has(vid)) {
-        if (next.size === 1) return next; // keep at least one
-        next.delete(vid);
-        // update sort col if it belongs to removed venue
-        setSortCol(sc => sc.startsWith(vid + "_") ? "hl_apr30" : sc);
-      } else {
-        next.add(vid);
-        if (!loadedRef.current[vid]) loadVenue(vid);
-      }
-      return next;
-    });
-  };
-
   const refreshVenue = (vid) => {
     loadedRef.current[vid] = false;
     setVenueData(prev => ({ ...prev, [vid]: null }));
@@ -2021,7 +2522,10 @@ function ComparePage({ onNavigate }) {
   };
 
   // Auto-load HL on mount
-  useEffect(() => { loadVenue("hl"); }, [loadVenue]);
+  // Load data for each selected venue
+  useEffect(() => {
+    for (const vid of selectedVenues) loadVenue(vid);
+  }, [selectedVenues, loadVenue]);
 
   const handleSort = (col) => { if (sortCol === col) setSortDir(d => -d); else { setSortCol(col); setSortDir(-1); } };
 
@@ -2080,9 +2584,9 @@ function ComparePage({ onNavigate }) {
       <div style={{ marginBottom: 12, display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>
-            Compare APR<span style={{ color: "#4a9eff" }}> · all markets</span>
+            Compare Rates Across Venues
           </h2>
-          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Avg APR 7d / 30d / 90d — click column to sort</div>
+          <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Find The Best Funding Rates Across All Venues And Markets</div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button onClick={() => { VENUES.forEach(v2 => { if (selectedVenues.has(v2.id)) refreshVenue(v2.id); }); }} disabled={isLoading} style={{
@@ -2097,45 +2601,28 @@ function ComparePage({ onNavigate }) {
         </div>
       </div>
 
-      {/* Controls encadré */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-        {/* Venue row */}
-        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
-          {VENUES.map(v2 => {
-            const active = selectedVenues.has(v2.id);
-            const loading2 = loadingVenues.has(v2.id);
-            const prog = progressMap[v2.id];
+      {/* Loading status badges */}
+      {loadingVenues.size > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {[...loadingVenues].map(vid => {
+            const prog = progressMap[vid];
+            const vInfo = VENUES.find(v2 => v2.id === vid);
             return (
-              <button key={v2.id} onClick={() => toggleVenue(v2.id)} style={{
-                boxSizing: "border-box",
-                background: active ? `${v2.color}22` : "transparent",
-                border: `1px solid ${active ? v2.color : "var(--border)"}`,
-                borderRadius: 4, color: active ? v2.color : "var(--text-dim)",
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 10, fontWeight: active ? 600 : 400,
-                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
-              }}>
-                {v2.label}{loading2 && prog ? ` (${prog.done}/${prog.total})` : ""}
-              </button>
+              <span key={vid} style={{ fontSize: 9, color: vInfo?.color ?? "#4a9eff", letterSpacing: "0.06em" }}>
+                {vInfo?.label}: {prog ? `${prog.done}/${prog.total}` : "..."}
+              </span>
             );
           })}
         </div>
-        {/* Market row */}
-        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
-          {CATS.map(cat => (
-            <button key={cat} onClick={() => setFilterCat(cat)} style={{
-              boxSizing: "border-box",
-              background: filterCat === cat ? "#4a9eff22" : "transparent",
-              border: `1px solid ${filterCat === cat ? "#4a9eff" : "var(--border)"}`,
-              borderRadius: 4, color: filterCat === cat ? "#4a9eff" : "var(--text-dim)",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: filterCat === cat ? 600 : 400,
-              padding: "5px 10px", cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.05em",
-            }}>{cat}</button>
-          ))}
-        </div>
-      </div>
+      )}
+
+      {/* Top assets */}
+      {sorted.length > 0 && (() => {
+        const firstVid = [...selectedVenues][0] ?? "hl";
+        const aprKey = `${firstVid}_apr30`;
+        const top5 = [...sorted].filter(r => r[aprKey] != null).sort((a, b) => Math.abs(b[aprKey]) - Math.abs(a[aprKey])).slice(0, 5);
+        return <TopAssetsBar items={top5.map(r => ({ label: r.coin, value: r[aprKey], sub: `30d · ${(VENUES.find(v2 => v2.id === firstVid))?.label ?? firstVid}` }))} onSelect={c => onNavigate?.(c)} />;
+      })()}
 
       {/* Progress bars */}
       {[...loadingVenues].map(vid => {
@@ -2249,13 +2736,13 @@ const INTRADAY_WINS = {
 const MA_COLORS = ["#4a9eff", "#00d4aa", "#f0b90b", "#ff4d6d", "#a855f7"];
 
 
-function applyRollingMA(data, windows, freq) {
+function applyRollingMA(data, windows) {
   return data.map((d, i) => {
-    const pt = { time: d.time, raw: d.rate * freq };
+    const pt = { time: d.time };
     for (const w of windows) {
       if (i >= w.n - 1) {
-        const avg = data.slice(i - w.n + 1, i + 1).reduce((s, x) => s + x.rate, 0) / w.n;
-        pt[w.key] = avg * freq;
+        const slice = data.slice(i - w.n + 1, i + 1);
+        pt[w.key] = slice.reduce((s, x) => s + x.rate, 0) / w.n;
       } else {
         pt[w.key] = null;
       }
@@ -2264,320 +2751,147 @@ function applyRollingMA(data, windows, freq) {
   });
 }
 
-function TrendTooltip({ active, payload, wins, activeWins, mode }) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  return (
-    <div style={{ background: "var(--bg-alt)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
-      <div style={{ color: "#4a9eff", marginBottom: 5, fontSize: 10 }}>{fmtDateTime(d.time)}</div>
-      {d.raw != null && (
-        <div style={{ color: "var(--text-label)", marginBottom: 4, fontSize: 10 }}>
-          {mode === "daily" ? "Day avg" : "Raw rate"}{" "}
-          <span style={{ color: d.raw >= 0 ? "#2a3a2a" : "#3a2a2a" }}>{fmtAPR(d.raw)}</span>
-        </div>
-      )}
-      {wins.map((w, i) => activeWins.has(w.key) && d[w.key] != null && (
-        <div key={w.key} style={{ marginBottom: 2 }}>
-          <span style={{ color: MA_COLORS[i % MA_COLORS.length] }}>{w.label}</span>
-          <span style={{ color: "#bbb" }}> {fmtAPR(d[w.key])}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
-function TrendPage() {
+// ── DATA (raw funding data + CSV export) ──────────────────────────────────────
+function DataPage({ venue, coin, setCoin }) {
   const isMobile = useIsMobile();
-  const [category, setCategory] = usePersistedState("trendCategory", "Crypto");
-  const [coin, setCoin]         = usePersistedState("trendCoin", "BTC");
-  const [inputCoin, setInputCoin] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("trendCoin") ?? '"BTC"'); } catch { return "BTC"; }
-  });
-  const [venue, setVenue]       = usePersistedState("trendVenue", "hl");
-  const [mode, setMode]         = usePersistedState("trendMode", "daily"); // "daily" | "intraday"
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState(null);
-  const [chartData, setChartData] = useState([]);
-  const [activeWins, setActiveWins] = useState(new Set(["ma7", "ma30", "ma90"]));
+  const [inputCoin, setInputCoin] = useState(coin);
+  useEffect(() => { setInputCoin(coin); }, [coin]);
+  const [period, setPeriod] = useState(30);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [tablePage, setTablePage] = useState(0);
+  const PAGE_SIZE = 50;
+  const { top: topAssets, bottom: bottomAssets } = useTopAssets(venue);
 
-  const wins = mode === "daily" ? DAILY_WINS : (INTRADAY_WINS[venue] ?? INTRADAY_WINS.bn);
-
-  // Reset active MA windows when mode or venue changes
-  useEffect(() => {
-    if (mode === "daily") {
-      setActiveWins(new Set(["ma7", "ma30", "ma90"]));
-    } else {
-      const w = INTRADAY_WINS[venue] ?? INTRADAY_WINS.bn;
-      setActiveWins(new Set(w.slice(0, 2).map(x => x.key)));
-    }
-  }, [mode, venue]);
-
-  const load = useCallback(async (c, v, m) => {
+  const fetchData = useCallback(async (c, days, v) => {
     if (CRYPTO_ONLY_VENUES.has(v) && isXyz(c)) {
-      setError(`${c} is not available on ${VENUES.find(x => x.id === v)?.label}`);
-      setChartData([]); return;
+      setData([]); setError(`${c} is not available on ${VENUES.find(x => x.id === v)?.label}`); return;
     }
-    setLoading(true); setError(null); setChartData([]);
+    setLoading(true); setError(null); setData([]);
     try {
-      // Fetch enough data to compute largest MA window
-      const days = m === "daily" ? 92 : 32;   // +2 days buffer
-      let raw = [];
-      raw = await apiFetchHistory(v, c, days);
-
+      const raw = await apiFetchHistory(v, c, days);
       if (!raw.length) throw new Error(`No data for ${c} on ${VENUES.find(x => x.id === v)?.label}`);
-
-      const freq = VENUE_FREQ[v];
-      // Periods per day for each venue (used to convert day-windows to period-counts)
-      const ppd = { hl: 24, dy: 24, lt: 24, bn: 3, by: 3, okx: 3, ad: 3 }[v] ?? 24;
-      const winsToUse = m === "daily"
-        ? DAILY_WINS.map(w => ({ ...w, n: w.n * ppd }))   // 7j → 7×24=168 HL periods, 7×3=21 BN periods…
-        : (INTRADAY_WINS[v] ?? INTRADAY_WINS.bn);
-      // Always use raw data points — gives same result as Explorer's simple mean at the last point
-      const base = raw.map(d => ({ time: d.time, rate: parseFloat(d.fundingRate) }));
-
-      setChartData(applyRollingMA(base, winsToUse, freq));
+      setData(raw);
     } catch (e) { setError(e.message); }
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(coin, venue, mode); }, [coin, venue, mode, load]);
-
-  const toggleWin = (key) => setActiveWins(prev => {
-    const next = new Set(prev);
-    if (next.has(key)) { if (next.size > 1) next.delete(key); }
-    else next.add(key);
-    return next;
-  });
+  useEffect(() => { fetchData(coin, period, venue); setTablePage(0); }, [coin, period, venue, fetchData]);
 
   const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); };
-  const handleVenueChange = (vid) => {
-    setVenue(vid);
-    if (vid !== "hl" && vid !== "ad" && category !== "Crypto") {
-      setCategory("Crypto");
-      const available = getVenueCoins(vid, "Crypto");
-      if (available.length > 0 && !available.includes(coin)) { setCoin(available[0]); setInputCoin(available[0]); }
-    }
+  const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) setCoin(c); };
+
+  const freq = VENUE_FREQ[venue] || 8760;
+  const tableData = [...data].reverse();
+  const totalPages = Math.max(1, Math.ceil(tableData.length / PAGE_SIZE));
+  const pageData = tableData.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE);
+
+  const exportCSV = () => {
+    const header = "Date,Time,Funding Rate,Premium,APR\n";
+    const rows = tableData.map(d => {
+      const dt = new Date(d.time);
+      const date = dt.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+      const time = dt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      const rate = (parseFloat(d.fundingRate) * 100).toFixed(6);
+      const premium = ((parseFloat(d.premium ?? 0)) * 100).toFixed(6);
+      const apr = toAPR(d.fundingRate, freq).toFixed(2);
+      return `${date},${time},${rate}%,${premium}%,${apr}%`;
+    }).join("\n");
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = `funding_${coin}_${venue}_${period}d.csv`; a.click();
+    URL.revokeObjectURL(a.href);
   };
-
-  // Last non-null values for each MA
-  const last = chartData.length ? chartData[chartData.length - 1] : null;
-  const activeWinList = wins.filter(w => activeWins.has(w.key));
-  const shortVal = last ? last[activeWinList[0]?.key] : null;
-  const longVal  = last ? last[activeWinList[activeWinList.length - 1]?.key] : null;
-  const signal   = shortVal != null && longVal != null && activeWinList.length > 1
-    ? (shortVal > longVal ? "haussier" : shortVal < longVal ? "baissier" : "neutre")
-    : null;
-
-  const venueColor = VENUES.find(v2 => v2.id === venue)?.color ?? "#4a9eff";
-
-  const trendDayBoundaries = [];
-  if (mode === "intraday") {
-    for (let i = 1; i < chartData.length; i++) {
-      const prev = new Date(chartData[i - 1].time).toDateString();
-      const curr = new Date(chartData[i].time).toDateString();
-      if (curr !== prev) trendDayBoundaries.push(chartData[i].time);
-    }
-  } else {
-    for (let i = 1; i < chartData.length; i++) {
-      const prevWeek = Math.floor(chartData[i - 1].time / (7 * 24 * 3600 * 1000));
-      const currWeek = Math.floor(chartData[i].time / (7 * 24 * 3600 * 1000));
-      if (currWeek !== prevWeek) trendDayBoundaries.push(chartData[i].time);
-    }
-  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, width: "100%" }}>
-      {/* Header */}
-      <div style={{ marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-        <span style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
-          {coin}<span style={{ color: venueColor, fontWeight: 700 }}>-TREND</span>
-        </span>
-        <div style={{ display: "flex", gap: 4 }}>
-          {[["daily","DAILY MA"],["intraday","INTRADAY MA"]].map(([m, lbl]) => (
-            <button key={m} onClick={() => setMode(m)} style={{
-              boxSizing: "border-box",
-              background: mode === m ? "#4a9eff22" : "transparent",
-              border: `1px solid ${mode === m ? "#4a9eff" : "var(--border)"}`,
-              borderRadius: 4, color: mode === m ? "#4a9eff" : "var(--text-dim)",
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: mode === m ? 600 : 400,
-              padding: "6px 12px", cursor: "pointer", letterSpacing: "0.05em", whiteSpace: "nowrap",
-            }}>{isMobile ? (m === "daily" ? "DAILY" : "INTRADAY") : lbl}</button>
-          ))}
-        </div>
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: "0 0 3px 0", letterSpacing: "-0.02em" }}>Raw Funding Data</h2>
+        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Historical Funding Rate Records For {coin}-PERP</div>
       </div>
 
-      {/* Selectors card — same layout as Explorer */}
+      <TopAssetsBar
+        items={[
+          ...topAssets.map(a => ({ label: a.coin, value: a.avg7, sub: "TOP 7d APR" })),
+          ...bottomAssets.map(a => ({ label: a.coin, value: a.avg7, sub: "LOW 7d APR" })),
+        ]}
+        activeLabel={coin}
+        onSelect={c => { setCoin(c); setInputCoin(c); }}
+        splitAt={3}
+      />
+
+      {/* Controls */}
       <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {/* Venue */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Venue</span>
-            {VENUES.map(v2 => (
-              <button key={v2.id} onClick={() => handleVenueChange(v2.id)} style={{
-                boxSizing: "border-box",
-                background: venue === v2.id ? `${v2.color}22` : "transparent",
-                border: `1px solid ${venue === v2.id ? v2.color : "var(--border)"}`,
-                borderRadius: 4, color: venue === v2.id ? v2.color : "var(--text-dim)",
-                fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: venue === v2.id ? 600 : 400,
-                padding: "5px 12px", cursor: "pointer", letterSpacing: "0.05em",
-              }}>{v2.label}</button>
-            ))}
-          </div>
-          {/* Market */}
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Market</span>
-            {Object.keys(MARKETS).map(cat => {
-              const enabled = venue === "hl" || venue === "ad" || cat === "Crypto";
-              const firstCoin = venue === "ad" && cat !== "Crypto"
-                ? (cat === "Stocks" ? AD_STOCKS[0] : cat === "Commodities" ? AD_COMMODITIES[0] : AD_FX[0])
-                : (MARKETS[cat]?.[0]);
-              return (
-                <button key={cat} onClick={() => { if (!enabled) return; setCategory(cat); setCoin(firstCoin); setInputCoin(firstCoin); }} style={{
-                  background: category === cat ? "#4a9eff22" : "transparent",
-                  border: `1px solid ${category === cat ? "#4a9eff" : enabled ? "var(--border)" : "var(--border-dim)"}`,
-                  borderRadius: 4, color: category === cat ? "#4a9eff" : enabled ? "var(--text-dim)" : "var(--border)",
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: category === cat ? 600 : 400,
-                  padding: "5px 10px", cursor: enabled ? "pointer" : "not-allowed",
-                  letterSpacing: "0.05em", textTransform: "uppercase", opacity: enabled ? 1 : 0.3,
-                }}>{cat}</button>
-              );
-            })}
-          </div>
-          {/* Asset */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Asset</span>
-            <CoinSelector coins={prioritizeCoins(venue, category, getVenueCoins(venue, category))} selected={coin} onSelect={handleCoinSelect} />
-          </div>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", width: 44, flexShrink: 0 }}>Period</span>
+          {[{l:"7d",d:7},{l:"30d",d:30},{l:"90d",d:90}].map(p => (
+            <button key={p.d} onClick={() => setPeriod(p.d)} style={{
+              boxSizing: "border-box",
+              background: period === p.d ? "#4a9eff22" : "transparent",
+              border: `1px solid ${period === p.d ? "#4a9eff" : "var(--border)"}`,
+              borderRadius: 4, color: period === p.d ? "#4a9eff" : "var(--text-dim)",
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 12px", cursor: "pointer",
+            }}>{p.l}</button>
+          ))}
+          <div style={{ flex: 1 }} />
+          <button onClick={exportCSV} disabled={data.length === 0} style={{
+            background: data.length > 0 ? "#16c78422" : "transparent",
+            border: `1px solid ${data.length > 0 ? "#16c784" : "var(--border)"}`,
+            borderRadius: 4, color: data.length > 0 ? "#16c784" : "var(--text-dim)",
+            fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+            padding: "5px 12px", cursor: data.length > 0 ? "pointer" : "default", letterSpacing: "0.05em",
+          }}>EXPORT CSV</button>
+          <div style={{ width: 1, height: 20, background: "var(--border)", margin: "0 2px" }} />
+          <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
+            onKeyDown={e => e.key === "Enter" && handleSearch()} placeholder="Ticker..."
+            style={{ width: 80, background: "var(--bg)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "5px 8px", outline: "none" }} />
+          <button onClick={handleSearch} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 10px", cursor: "pointer" }}>GO</button>
         </div>
       </div>
 
-      {/* Stats cards + window controls (mirrors Explorer layout) */}
-      {last && activeWinList.length > 0 && (
-        <div style={{ marginBottom: 12, width: "100%" }}>
-          {/* Mobile: window toggles + search in compact top row */}
-          {isMobile && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {wins.map((w, i) => {
-                const color = MA_COLORS[i % MA_COLORS.length];
-                const active = activeWins.has(w.key);
-                return (
-                  <button key={w.key} onClick={() => toggleWin(w.key)} style={{
-                    boxSizing: "border-box",
-                    background: active ? `${color}22` : "transparent",
-                    border: `1px solid ${active ? color : "var(--border)"}`,
-                    borderRadius: 4, color: active ? color : "var(--text-muted)",
-                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
-                    padding: "6px 10px", cursor: "pointer",
-                  }}>{w.label}</button>
-                );
-              })}
-              <div style={{ flex: 1 }} />
-              <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
-                placeholder="Ticker..."
-                style={{ width: 80, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "6px 8px", outline: "none" }} />
-              <button onClick={() => handleCoinSelect(inputCoin.trim().toUpperCase())} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "6px 10px", cursor: "pointer" }}>GO</button>
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, width: "100%" }}>
-            {/* Left: MA stat cards */}
-            <div style={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(auto-fill, minmax(130px, 1fr))", gap: 8 }}>
-              {activeWinList.map((w, i) => {
-                const color = MA_COLORS[i % MA_COLORS.length];
-                const val = last[w.key];
-                if (val == null) return null;
-                return (
-                  <StatCard key={w.key} label={w.label}
-                    value={<span style={{ color: val >= 0 ? "#00d4aa" : "#ff4d6d" }}>{fmtAPR(val)}</span>}
-                    color={color}
-                  />
-                );
-              })}
-            </div>
-            {/* Right: window toggles + search (desktop only) */}
-            {!isMobile && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {wins.map((w, i) => {
-                    const color = MA_COLORS[i % MA_COLORS.length];
-                    const active = activeWins.has(w.key);
-                    return (
-                      <button key={w.key} onClick={() => toggleWin(w.key)} style={{
-                        boxSizing: "border-box",
-                        background: active ? `${color}22` : "transparent",
-                        border: `1px solid ${active ? color : "var(--border)"}`,
-                        borderRadius: 4, color: active ? color : "var(--text-muted)",
-                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: active ? 600 : 400,
-                        padding: "5px 10px", cursor: "pointer",
-                      }}>{w.label}</button>
-                    );
-                  })}
-                </div>
-                <div style={{ display: "flex" }}>
-                  <input value={inputCoin} onChange={e => setInputCoin(e.target.value.toUpperCase())}
-                    onKeyDown={e => e.key === "Enter" && handleCoinSelect(inputCoin.trim().toUpperCase())}
-                    placeholder="Ticker..."
-                    style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRight: "none", borderRadius: "6px 0 0 6px", color: "var(--text)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", outline: "none" }} />
-                  <button onClick={() => handleCoinSelect(inputCoin.trim().toUpperCase())} style={{ background: "#4a9eff", border: "none", borderRadius: "0 6px 6px 0", color: "var(--bg)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: "5px 10px", cursor: "pointer" }}>GO</button>
-                </div>
-              </div>
-            )}
+      {/* Table */}
+      {loading && <div style={{ padding: 20, textAlign: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>Loading data…</div>}
+      {error && !loading && <div style={{ padding: 20, textAlign: "center", color: "#ff4d6d", fontSize: 11 }}>⚠ {error}</div>}
+      {!loading && !error && data.length > 0 && (
+        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", minWidth: 420 }}>
+              <thead>
+                <tr style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
+                  {["Date","Time","Funding Rate","Premium","APR"].map(h => (
+                    <th key={h} style={{ padding: "9px 12px", textAlign: h === "Date" || h === "Time" ? "left" : "right", color: "var(--text-label)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pageData.map(row => {
+                  const r = parseFloat(row.fundingRate);
+                  const p = r >= 0;
+                  const dt = new Date(row.time);
+                  return (
+                    <tr key={row.time} style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-card)" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--bg-alt)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "var(--bg-card)"}
+                    >
+                      <td style={{ padding: "6px 12px", color: "var(--text-dim)" }}>{dt.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" })}</td>
+                      <td style={{ padding: "6px 12px", color: "var(--text-muted)" }}>{dt.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</td>
+                      <td style={{ padding: "6px 12px", textAlign: "right", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{(r * 100).toFixed(4)}%</td>
+                      <td style={{ padding: "6px 12px", textAlign: "right", color: "var(--text-muted)" }}>{(parseFloat(row.premium ?? 0) * 100).toFixed(4)}%</td>
+                      <td style={{ padding: "6px 12px", textAlign: "right", color: p ? "#16c784" : "#ea3943", fontWeight: 500 }}>{fmtAPR(toAPR(row.fundingRate, freq))}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
-
-      {/* Chart */}
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "16px 4px 10px", flex: 1, minHeight: 260 }}>
-        {loading && (
-          <div style={{ height: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff44", fontSize: 11, letterSpacing: "0.15em" }}>
-            CALCUL DES MOYENNES…
+          <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid var(--border)", alignItems: "center", background: "var(--bg-card)" }}>
+            <button onClick={() => setTablePage(p => Math.max(0, p - 1))} disabled={tablePage === 0} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage === 0 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage === 0 ? "default" : "pointer" }}>←</button>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{tablePage + 1} / {totalPages}</span>
+            <button onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))} disabled={tablePage >= totalPages - 1} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: tablePage >= totalPages - 1 ? "var(--border)" : "var(--text-dim)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, padding: "4px 10px", cursor: tablePage >= totalPages - 1 ? "default" : "pointer" }}>→</button>
+            <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: "auto" }}>{tableData.length} entries</span>
           </div>
-        )}
-        {error && !loading && (
-          <div style={{ height: 260, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11 }}>
-            ▲ {error}
-          </div>
-        )}
-        {!loading && !error && chartData.length > 0 && (
-          <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 0, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
-              <XAxis dataKey="time" type="number" domain={["dataMin","dataMax"]} scale="time"
-                tick={false} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-              <YAxis tickFormatter={v => v.toFixed(1) + "%"}
-                tick={{ fill: "var(--text-muted)", fontSize: 9, fontFamily: "'IBM Plex Mono'" }}
-                axisLine={false} tickLine={false} width={46} />
-              <ReferenceLine y={0} stroke="var(--text)" strokeWidth={0.8} />
-              <Tooltip content={<TrendTooltip wins={wins} activeWins={activeWins} mode={mode} />} />
-              {trendDayBoundaries.map(t => (
-                <ReferenceLine key={t} x={t} stroke="var(--border)" strokeWidth={1} strokeOpacity={1} strokeDasharray="3 6"
-                  label={{ value: new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }), position: "bottom", fill: "var(--text-muted)", fontSize: 8, fontFamily: "'IBM Plex Mono', monospace" }}
-                />
-              ))}
-              {/* Raw / daily avg as very faint area */}
-              <Area dataKey="raw" stroke="#ffffff0a" fill="#ffffff06" dot={false} activeDot={false} isAnimationActive={false} />
-              {/* MA lines */}
-              {wins.map((w, i) => activeWins.has(w.key) && (
-                <Line key={w.key} type="monotone" dataKey={w.key}
-                  stroke={MA_COLORS[i % MA_COLORS.length]}
-                  strokeWidth={1.5 + i * 0.4}
-                  dot={false} activeDot={{ r: 3 }}
-                  connectNulls={false}
-                  isAnimationActive={false}
-                />
-              ))}
-            </ComposedChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Footer info */}
-      {chartData.length > 0 && !loading && (
-        <div style={{ marginTop: 6, fontSize: 9, color: "var(--text-muted)", textAlign: "right" }}>
-          {mode === "daily"
-            ? `${chartData.length} raw pts · windows in days × ${({ hl:24,dy:24,lt:24,bn:3,by:3,okx:3,ad:3 }[venue]??24)} periods/d`
-            : `${chartData.length} raw pts · ${VENUES.find(v2 => v2.id === venue)?.label}`
-          }
         </div>
       )}
     </div>
@@ -2588,13 +2902,73 @@ function TrendPage() {
 export default function App() {
   const isMobile = useIsMobile();
   const [page, setPage] = usePersistedState("page", "explorer");
-  const [explorerCoin, setExplorerCoin] = usePersistedState("explorerCoin", "BTC");
+  // Redirect legacy "trend" page to explorer (TrendPage merged into ExplorerPage)
+  useEffect(() => { if (page === "trend") setPage("explorer"); }, [page, setPage]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [themeMode, setThemeMode] = usePersistedState("themeMode", "auto");
   // Incremented after dynamic asset fetch to trigger re-render across all pages
   const [, setAssetsVersion] = useState(0);
 
-  const navigateToExplorer = (coin) => { setExplorerCoin(coin); setPage("explorer"); };
+  // ── Shared state: venue / market / coin ──
+  const [selectedVenues, setSelectedVenues] = usePersistedState("selectedVenues", ["hl", "bn", "by"]);
+  const [category, setCategory] = usePersistedState("globalCategory", "Crypto");
+  const [coin, setCoin] = usePersistedState("globalCoin", "BTC");
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [hlDex, setHlDex] = useState(null);
+  const [perpDexs, setPerpDexs] = useState([]);
+  useEffect(() => { fetchPerpDexs().then(setPerpDexs); }, []);
+
+  const selectedVenuesSet = useMemo(() => new Set(selectedVenues), [selectedVenues]);
+  const primaryVenue = selectedVenues[0] || "hl";
+  const sidebarCoins = useMemo(
+    () => prioritizeCoins(primaryVenue, category, getVenueCoins(primaryVenue, category)),
+    [primaryVenue, category]
+  );
+
+  // Toggle a venue — multi-select on Compare/Spread, single-select elsewhere
+  const isMultiVenuePage = page === "compare" || page === "arbi";
+  const toggleVenue = useCallback((vid) => {
+    if (isMultiVenuePage) {
+      setSelectedVenues(prev => {
+        if (prev.includes(vid)) {
+          if (prev.length <= 1) return prev;
+          return prev.filter(v => v !== vid);
+        }
+        return [...prev, vid];
+      });
+    } else {
+      setSelectedVenues(prev => {
+        if (prev[0] === vid) return prev;
+        return [vid, ...prev.filter(v => v !== vid)];
+      });
+    }
+  }, [isMultiVenuePage, setSelectedVenues]);
+
+  // Change category, auto-correct coin if not available in the new category
+  const handleCategoryChange = useCallback((cat) => {
+    setCategory(cat);
+    const coins = getVenueCoins(primaryVenue, cat);
+    if (coins.length && !coins.includes(coin)) {
+      setCoin(coins[0]);
+    }
+  }, [primaryVenue, coin, setCategory, setCoin]);
+
+  // When primary venue changes to a crypto-only venue, force category to Crypto
+  useEffect(() => {
+    if (CRYPTO_ONLY_VENUES.has(primaryVenue) && category !== "Crypto") {
+      setCategory("Crypto");
+    }
+  }, [primaryVenue, category, setCategory]);
+
+  // Auto-correct coin when venue or category changes
+  useEffect(() => {
+    const coins = getVenueCoins(primaryVenue, category);
+    if (coins.length && !coins.includes(coin)) {
+      setCoin(coins[0]);
+    }
+  }, [primaryVenue, category, coin, setCoin]);
+
+  const navigateToExplorer = useCallback((c) => { setCoin(c); setPage("explorer"); }, [setCoin, setPage]);
 
   // Fetch dynamic asset lists on mount; bump version to re-render with updated lists
   useEffect(() => {
@@ -2614,14 +2988,17 @@ export default function App() {
     setThemeMode(prev => prev === "auto" ? "dark" : prev === "dark" ? "light" : "auto");
   };
 
-  const SIDEBAR_W = isMobile ? 0 : (sidebarOpen ? 200 : 52);
+  const SIDEBAR_W = isMobile ? 0 : (sidebarOpen ? 220 : 52);
+  const VENUE_SHORT = { hl: "HL", bn: "BN", by: "BY", okx: "OKX", dy: "DY", lt: "LT", ad: "AD" };
+  const CATEGORY_LIST = ["All", "Crypto", "Stocks", "Commodities", "FX / ETF"];
+  const showAssetSelector = false; // table replaces asset selector
 
   const NAV_ITEMS = [
     { id: "explorer", icon: "◈", label: "Explorer" },
-    { id: "trend",    icon: "⟲", label: "Trend" },
     { id: "compare",  icon: "⊞", label: "Compare" },
     { id: "arbi",     icon: "⇌", label: "Spread" },
-    { id: "hedge",    icon: "⊛", label: "Hedge" },
+    { id: "hedge",    icon: "⊛", label: "Swap" },
+    { id: "data",     icon: "⊟", label: "Data" },
   ];
 
   const navBtnStyle = (id) => ({
@@ -2629,12 +3006,12 @@ export default function App() {
     alignItems: "center",
     gap: sidebarOpen ? 10 : 0,
     justifyContent: sidebarOpen ? "flex-start" : "center",
-    width: "100%",
-    padding: sidebarOpen ? "9px 14px" : "9px 0",
+    width: "calc(100% - 12px)",
+    margin: "0 6px",
+    padding: sidebarOpen ? "9px 10px" : "9px 0",
     background: page === id ? "#4a9eff22" : "transparent",
     border: "none",
-    borderLeft: page === id ? "2px solid #4a9eff" : "2px solid transparent",
-    borderRadius: 0,
+    borderRadius: 8,
     color: page === id ? "#4a9eff" : "var(--text-muted)",
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: 12,
@@ -2684,15 +3061,21 @@ export default function App() {
 
       {/* Sidebar — desktop only */}
       {!isMobile && (
+        <div style={{ width: SIDEBAR_W + 24, minWidth: SIDEBAR_W + 24, maxWidth: SIDEBAR_W + 24, flexShrink: 0, transition: "width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease" }}>
         <div style={{
-          width: SIDEBAR_W, minWidth: SIDEBAR_W, maxWidth: SIDEBAR_W,
-          background: "var(--bg-card)", borderRight: "1px solid var(--border)",
+          position: "sticky", top: 0, height: "100vh",
+          margin: 12, borderRadius: 16,
+          border: "1px solid var(--border)",
+          background: "var(--bg-card)",
+          boxShadow: "0 2px 16px rgba(0,0,0,0.18)",
+          width: SIDEBAR_W,
           display: "flex", flexDirection: "column",
-          transition: "width 0.18s ease, min-width 0.18s ease, max-width 0.18s ease",
-          overflowX: "hidden", overflowY: "auto", position: "sticky", top: 0, height: "100vh", zIndex: 100,
+          overflow: "hidden",
+          transition: "width 0.18s ease",
+          zIndex: 100,
         }}>
           <button style={toggleBtnStyle} onClick={() => setSidebarOpen(v => !v)}>☰</button>
-          <nav style={{ flex: 1, display: "flex", flexDirection: "column", marginTop: 4 }}>
+          <nav style={{ display: "flex", flexDirection: "column", marginTop: 4 }}>
             {NAV_ITEMS.map(({ id, icon, label }) => (
               <button key={id} onClick={() => setPage(id)} style={navBtnStyle(id)}>
                 <span style={{ fontSize: 14, flexShrink: 0, width: sidebarOpen ? "auto" : "100%", textAlign: "center" }}>{icon}</span>
@@ -2700,8 +3083,102 @@ export default function App() {
               </button>
             ))}
           </nav>
+
+          {/* Spacer between nav and filters */}
+          <div style={{ flex: "0 0 20px" }} />
+
+          {/* Lower section: venue / market / asset / hip-3 selectors */}
           {sidebarOpen && (
-            <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--border)" }}>
+            <div style={{ borderTop: "1px solid var(--border)", padding: "16px 14px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto", flex: 1 }}>
+              {/* VENUE */}
+              <div>
+                <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>Venue</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {VENUES.map(v => {
+                    const active = isMultiVenuePage ? selectedVenues.includes(v.id) : primaryVenue === v.id;
+                    return (
+                      <button key={v.id} onClick={() => toggleVenue(v.id)} style={{
+                        padding: "4px 8px", fontSize: 9, fontWeight: active ? 600 : 400, fontFamily: "'IBM Plex Mono', monospace",
+                        background: active ? v.color + "22" : "transparent",
+                        border: `1px solid ${active ? v.color : "var(--border)"}`,
+                        borderRadius: 6, color: active ? v.color : "var(--text-muted)",
+                        cursor: "pointer", letterSpacing: "0.04em", transition: "all 0.15s",
+                        textAlign: "left",
+                      }}>
+                        {v.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* MARKET */}
+              <div>
+                <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>Market</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {CATEGORY_LIST.map(cat => {
+                    const active = category === cat;
+                    const disabled = cat !== "All" && cat !== "Crypto" && CRYPTO_ONLY_VENUES.has(primaryVenue);
+                    return (
+                      <button key={cat} onClick={() => !disabled && handleCategoryChange(cat)} style={{
+                        padding: "4px 8px", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
+                        background: active ? "#4a9eff22" : "transparent",
+                        border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
+                        borderRadius: 6, color: active ? "#4a9eff" : disabled ? "var(--ghost)" : "var(--text-muted)",
+                        cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+                        letterSpacing: "0.04em", transition: "all 0.15s", fontWeight: active ? 600 : 400,
+                      }}>
+                        {cat === "FX / ETF" ? "FX" : cat === "Commodities" ? "Cmdty" : cat}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ASSET — only for Explorer */}
+              {showAssetSelector && sidebarCoins.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>Asset</div>
+                  <CoinSelector coins={sidebarCoins} selected={coin} onSelect={setCoin} />
+                </div>
+              )}
+
+              {/* HIP-3 — only for Explorer on HL */}
+              {page === "explorer" && primaryVenue === "hl" && perpDexs.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>HIP-3</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                    <button onClick={() => setHlDex(null)} style={{
+                      padding: "4px 8px", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
+                      background: hlDex === null ? "#4a9eff22" : "transparent",
+                      border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
+                      borderRadius: 4, color: hlDex === null ? "#4a9eff" : "var(--text-muted)",
+                      cursor: "pointer", fontWeight: hlDex === null ? 600 : 400,
+                    }}>USDC</button>
+                    {perpDexs.map(dx => {
+                      const name = typeof dx === "string" ? dx : dx?.name;
+                      if (!name) return null;
+                      const label = dx?.fullName && dx.fullName.length <= 14 ? dx.fullName : name.toUpperCase();
+                      return (
+                        <button key={name} onClick={() => setHlDex(name)} style={{
+                          padding: "4px 8px", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
+                          background: hlDex === name ? "#4a9eff22" : "transparent",
+                          border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
+                          borderRadius: 4, color: hlDex === name ? "#4a9eff" : "var(--text-muted)",
+                          cursor: "pointer", fontWeight: hlDex === name ? 600 : 400,
+                          letterSpacing: "0.04em", textTransform: "uppercase",
+                        }}>{label}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Footer */}
+          {sidebarOpen && (
+            <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid var(--border)", marginTop: "auto" }}>
               <button onClick={cycleTheme} style={{ background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-muted)", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, padding: "5px 8px", cursor: "pointer", textAlign: "left", letterSpacing: "0.05em" }}>
                 {themeMode === "auto" ? "◑ auto" : themeMode === "dark" ? "● dark" : "☀ light"}
               </button>
@@ -2710,6 +3187,107 @@ export default function App() {
             </div>
           )}
         </div>
+        </div>
+      )}
+
+      {/* Mobile filter drawer */}
+      {isMobile && showMobileFilters && (
+        <>
+          <div onClick={() => setShowMobileFilters(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 250 }} />
+          <div style={{
+            position: "fixed", bottom: 56, left: 0, right: 0,
+            background: "var(--bg-card)", borderRadius: "16px 16px 0 0",
+            border: "1px solid var(--border)", borderBottom: "none",
+            padding: "16px 18px", zIndex: 260,
+            display: "flex", flexDirection: "column", gap: 14,
+            maxHeight: "60vh", overflowY: "auto",
+            boxShadow: "0 -4px 20px rgba(0,0,0,0.3)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Filters</span>
+              <button onClick={() => setShowMobileFilters(false)} style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: 16, cursor: "pointer" }}>✕</button>
+            </div>
+            {/* VENUE */}
+            <div>
+              <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>Venue</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {VENUES.map(v => {
+                  const active = isMultiVenuePage ? selectedVenues.includes(v.id) : primaryVenue === v.id;
+                  return (
+                    <button key={v.id} onClick={() => toggleVenue(v.id)} style={{
+                      padding: "6px 10px", fontSize: 10, fontWeight: active ? 600 : 400, fontFamily: "'IBM Plex Mono', monospace",
+                      background: active ? v.color + "22" : "transparent",
+                      border: `1px solid ${active ? v.color : "var(--border)"}`,
+                      borderRadius: 6, color: active ? v.color : "var(--text-muted)",
+                      cursor: "pointer",
+                    }}>
+                      {v.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {/* MARKET */}
+            <div>
+              <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>Market</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {CATEGORY_LIST.map(cat => {
+                  const active = category === cat;
+                  const disabled = cat !== "All" && cat !== "Crypto" && CRYPTO_ONLY_VENUES.has(primaryVenue);
+                  return (
+                    <button key={cat} onClick={() => !disabled && handleCategoryChange(cat)} style={{
+                      padding: "6px 10px", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace",
+                      background: active ? "#4a9eff22" : "transparent",
+                      border: `1px solid ${active ? "#4a9eff" : "var(--border)"}`,
+                      borderRadius: 6, color: active ? "#4a9eff" : disabled ? "var(--ghost)" : "var(--text-muted)",
+                      cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+                      fontWeight: active ? 600 : 400,
+                    }}>
+                      {cat === "FX / ETF" ? "FX" : cat === "Commodities" ? "Cmdty" : cat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {/* ASSET */}
+            {showAssetSelector && sidebarCoins.length > 0 && (
+              <div>
+                <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>Asset</div>
+                <CoinSelector coins={sidebarCoins} selected={coin} onSelect={(c) => { setCoin(c); setShowMobileFilters(false); }} />
+              </div>
+            )}
+            {/* HIP-3 */}
+            {page === "explorer" && primaryVenue === "hl" && perpDexs.length > 0 && (
+              <div>
+                <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>HIP-3</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  <button onClick={() => { setHlDex(null); setShowMobileFilters(false); }} style={{
+                    padding: "6px 10px", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace",
+                    background: hlDex === null ? "#4a9eff22" : "transparent",
+                    border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
+                    borderRadius: 4, color: hlDex === null ? "#4a9eff" : "var(--text-muted)",
+                    cursor: "pointer", fontWeight: hlDex === null ? 600 : 400,
+                  }}>USDC</button>
+                  {perpDexs.map(dx => {
+                    const name = typeof dx === "string" ? dx : dx?.name;
+                    if (!name) return null;
+                    const label = dx?.fullName && dx.fullName.length <= 14 ? dx.fullName : name.toUpperCase();
+                    return (
+                      <button key={name} onClick={() => { setHlDex(name); setShowMobileFilters(false); }} style={{
+                        padding: "6px 10px", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace",
+                        background: hlDex === name ? "#4a9eff22" : "transparent",
+                        border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
+                        borderRadius: 4, color: hlDex === name ? "#4a9eff" : "var(--text-muted)",
+                        cursor: "pointer", fontWeight: hlDex === name ? 600 : 400,
+                        textTransform: "uppercase",
+                      }}>{label}</button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* Bottom nav bar — mobile only */}
@@ -2720,7 +3298,7 @@ export default function App() {
           display: "flex", alignItems: "stretch", zIndex: 200,
         }}>
           {NAV_ITEMS.map(({ id, icon, label }) => (
-            <button key={id} onClick={() => setPage(id)} style={{
+            <button key={id} onClick={() => { setPage(id); setShowMobileFilters(false); }} style={{
               flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3,
               background: page === id ? "#4a9eff18" : "transparent",
               border: "none", borderTop: page === id ? "2px solid #4a9eff" : "2px solid transparent",
@@ -2731,12 +3309,15 @@ export default function App() {
               <span style={{ fontSize: 7, letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</span>
             </button>
           ))}
-          <button onClick={cycleTheme} style={{
+          <button onClick={() => setShowMobileFilters(v => !v)} style={{
             width: 44, display: "flex", alignItems: "center", justifyContent: "center",
-            background: "transparent", border: "none", borderTop: "2px solid transparent",
-            color: "var(--text-muted)", cursor: "pointer", fontSize: 15, flexShrink: 0,
+            background: showMobileFilters ? "#4a9eff18" : "transparent",
+            border: "none", borderTop: showMobileFilters ? "2px solid #4a9eff" : "2px solid transparent",
+            color: showMobileFilters ? "#4a9eff" : "var(--text-muted)",
+            cursor: "pointer", fontSize: 15, flexShrink: 0,
+            fontFamily: "'IBM Plex Mono', monospace",
           }}>
-            {themeMode === "auto" ? "◑" : themeMode === "dark" ? "●" : "☀"}
+            ⚙
           </button>
         </div>
       )}
@@ -2745,14 +3326,14 @@ export default function App() {
       <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "12px 14px" : "clamp(14px,3vw,28px) clamp(16px,4vw,32px)", paddingBottom: isMobile ? 68 : undefined }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
           {page === "explorer"
-            ? <ExplorerPage key={explorerCoin} initialCoin={explorerCoin} onCoinChange={setExplorerCoin} />
-            : page === "trend"
-            ? <TrendPage />
+            ? <ExplorerPage key={coin} venue={primaryVenue} category={category === "All" ? "Crypto" : category} coin={coin} setCoin={setCoin} hlDex={hlDex} setHlDex={setHlDex} />
             : page === "compare"
-            ? <ComparePage onNavigate={navigateToExplorer} />
+            ? <ComparePage selectedVenues={selectedVenuesSet} category={category} onNavigate={navigateToExplorer} />
             : page === "arbi"
-            ? <ArbitragePage onNavigate={navigateToExplorer} />
-            : <BorosPage />
+            ? <ArbitragePage selectedVenues={selectedVenuesSet} onNavigate={navigateToExplorer} />
+            : page === "data"
+            ? <DataPage venue={primaryVenue} coin={coin} setCoin={setCoin} />
+            : <BorosPage venue={primaryVenue} />
           }
         </div>
       </div>

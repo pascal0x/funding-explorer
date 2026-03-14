@@ -62,27 +62,34 @@ export async function getLastTime(venue, coin) {
   return res.rows[0]?.t ? Number(res.rows[0].t) : null;
 }
 
-// Bulk APR: average rates for all coins on a venue over 7d/30d/90d
+// Bulk APR: average rates for all coins on a venue over 3d/7d/30d/90d
 export async function getBulkAPR(venue) {
   const now = Date.now();
+  const t3  = now - 3  * 24 * 3600 * 1000;
   const t7  = now - 7  * 24 * 3600 * 1000;
   const t30 = now - 30 * 24 * 3600 * 1000;
   const t90 = now - 90 * 24 * 3600 * 1000;
   const res = await pool.query(
     `SELECT coin,
-       AVG(CASE WHEN time >= $2 THEN rate END) AS avg7,
-       AVG(CASE WHEN time >= $3 THEN rate END) AS avg30,
-       AVG(rate)                                AS avg90
+       AVG(CASE WHEN time >= $2 THEN rate END) AS avg3,
+       AVG(CASE WHEN time >= $3 THEN rate END) AS avg7,
+       AVG(CASE WHEN time >= $4 THEN rate END) AS avg30,
+       AVG(rate)                                AS avg90,
+       (SELECT rate FROM funding_rates f2
+        WHERE f2.venue = $1 AND f2.coin = funding_rates.coin
+        ORDER BY f2.time DESC LIMIT 1) AS last_rate
      FROM funding_rates
-     WHERE venue = $1 AND time >= $4
+     WHERE venue = $1 AND time >= $5
      GROUP BY coin`,
-    [venue, t7, t30, t90]
+    [venue, t3, t7, t30, t90]
   );
   return res.rows.map(r => ({
     coin: r.coin,
+    avg3:  r.avg3  !== null ? Number(r.avg3)  : null,
     avg7:  r.avg7  !== null ? Number(r.avg7)  : null,
     avg30: r.avg30 !== null ? Number(r.avg30) : null,
     avg90: r.avg90 !== null ? Number(r.avg90) : null,
+    lastRate: r.last_rate !== null ? Number(r.last_rate) : null,
   }));
 }
 
