@@ -12,6 +12,7 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 Environment=NODE_ENV=production
+EnvironmentFile=/home/user/funding-explorer/server/.env
 
 [Install]
 WantedBy=multi-user.target

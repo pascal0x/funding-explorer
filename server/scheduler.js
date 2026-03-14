@@ -2,15 +2,17 @@
 import cron from "node-cron";
 import { fetchVenue } from "./fetchers.js";
 import { insertRates, getLastTime } from "./db.js";
+import { getCoinsForVenue } from "./discovery.js";
 
-const VENUES = {
-  hl:  { freq: "0 * * * *",      coins: ["HYPE","BTC","ETH","SOL","AVAX","ARB","OP","MATIC","DYDX","BNB","WIF","LINK","SUI","APT","SPX","kPEPE"] },
-  bn:  { freq: "10 0,8,16 * * *", coins: ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"] },
-  by:  { freq: "20 0,8,16 * * *", coins: ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"] },
-  okx: { freq: "30 0,8,16 * * *", coins: ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","DYDX","WIF","HYPE","PEPE","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","GMX","JUP"] },
-  dy:  { freq: "0 1,9,17 * * *",  coins: ["BTC","ETH","SOL","AVAX","LINK","ARB","OP","DOGE","ADA","XRP","LTC","MATIC","UNI","AAVE","CRV","JUP","WIF","PEPE","SUI","APT","BNB"] },
-  lt:  { freq: "5 * * * *",       coins: ["BTC","ETH","SOL","AVAX","ARB","WIF","SUI","APT","LINK","BNB","HYPE"] },
-  ad:  { freq: "40 0,8,16 * * *", coins: ["BTC","ETH","SOL","BNB","AVAX","ARB","OP","MATIC","LINK","SUI","APT","WIF","PEPE","ADA","XRP","LTC","DOT","UNI","AAVE","CRV","JUP"] },
+// Cron schedules per venue (HL/Lighter hourly, CEXs every 8h with offsets)
+const VENUE_SCHEDULES = {
+  hl:  "0 * * * *",
+  bn:  "10 0,8,16 * * *",
+  by:  "20 0,8,16 * * *",
+  okx: "30 0,8,16 * * *",
+  dy:  "0 1,9,17 * * *",
+  lt:  "5 * * * *",
+  ad:  "40 0,8,16 * * *",
 };
 
 async function syncVenueCoin(venue, coin) {
@@ -37,9 +39,12 @@ async function syncVenueCoin(venue, coin) {
 }
 
 async function syncVenue(venue) {
-  const coins = VENUES[venue].coins;
+  const coins = await getCoinsForVenue(venue);
+  if (!coins.length) {
+    console.warn(`[scheduler] ${venue}: no coins discovered, skipping`);
+    return;
+  }
   console.log(`[scheduler] syncing ${venue} (${coins.length} coins)…`);
-  // Sequential with small delay to avoid rate limiting
   for (const coin of coins) {
     await syncVenueCoin(venue, coin);
     await new Promise(r => setTimeout(r, 200));
@@ -47,8 +52,8 @@ async function syncVenue(venue) {
 }
 
 export function startScheduler() {
-  for (const [venue, cfg] of Object.entries(VENUES)) {
-    cron.schedule(cfg.freq, () => syncVenue(venue));
+  for (const [venue, freq] of Object.entries(VENUE_SCHEDULES)) {
+    cron.schedule(freq, () => syncVenue(venue));
   }
   console.log("[scheduler] cron jobs registered");
 }
@@ -56,7 +61,7 @@ export function startScheduler() {
 // Initial backfill: run all venues on startup to fill the DB
 export async function initialBackfill() {
   console.log("[scheduler] starting initial backfill…");
-  for (const venue of Object.keys(VENUES)) {
+  for (const venue of Object.keys(VENUE_SCHEDULES)) {
     await syncVenue(venue);
   }
   console.log("[scheduler] initial backfill complete");

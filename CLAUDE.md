@@ -31,7 +31,7 @@ Styles inline uniquement (pas de CSS-in-JS lib, pas de Tailwind).
 ```
 funding-explorer/
 ├── src/
-│   ├── App.jsx          # Application entière (~1800 lignes, monolithique)
+│   ├── App.jsx          # Application entière (~2600 lignes, monolithique)
 │   ├── main.jsx         # Point d'entrée React
 │   ├── App.css          # CSS minimal hérité
 │   └── index.css        # Reset global
@@ -51,14 +51,19 @@ funding-explorer/
 Navigation en haut de page (4 onglets) :
 
 ### 1. Explorer
-- Sélectionne un venue, une catégorie d'actif, un actif, une période (7 / 30 / 90 jours)
-- Affiche le graphique historique du funding rate + stats (avg / max / min en APR %)
+- Sélectionne un venue, une catégorie d'actif, un actif, une période (3 / 7 / 30 / 90 jours)
+- **Market table** : affiche TOUS les assets du venue (via `/api/bulk-apr`), colonnes RATE/3D/7D/30D/90D
+- **Favoris** : étoile cliquable, persistant localStorage, triés en haut de la table
+- Graphique historique du funding rate + stats (avg / max / min en APR %)
 - Live rate auto-refresh toutes les 60s
 - Pour Hyperliquid : sous-sélecteur **HIP-3** (DEXs builders sur HL)
+- **Info Market** (sous le graphique) :
+  - **Hyperliquid** (si venue=hl) : OI, volume, prix, funding, leverage, analyse liquidité (spread, price impact en %, depth)
+  - **CoinGecko** : infos token, prix, market cap, exchanges spot/dérivés
 - Table des données brutes (50 lignes / page)
 
 ### 2. Trend
-- Analyse de moving averages du funding rate
+- Analyse de moving averages du funding rate (sans bandes de Bollinger, ligne simple par MA)
 - Mode **daily** : MA 7j / 30j / 90j
 - Mode **intraday** : fenêtres de 6h à 7j
 - Signal BULL / BEAR / FLAT basé sur la MA
@@ -104,7 +109,7 @@ Navigation en haut de page (4 onglets) :
 
 ---
 
-## APIs utilisées (toutes publiques, pas de clé)
+## APIs externes (toutes publiques, pas de clé)
 
 | Venue | Endpoint principal |
 |-------|-------------------|
@@ -114,8 +119,22 @@ Navigation en haut de page (4 onglets) :
 | OKX | `https://www.okx.com/api/v5/public/funding-rate-history` |
 | dYdX | `https://indexer.dydx.trade/v4/historicalFunding` |
 | Lighter | `https://mainnet.zklighter.elliot.ai/api/v1/` |
+| CoinGecko | `https://api.coingecko.com/api/v3/` (search + coins/{id}) |
 
-Toutes les APIs sont appelées directement depuis le navigateur (CORS OK). Pas de backend/proxy.
+## Backend API (server port 4000, proxifié par Vite en dev)
+
+| Endpoint | Description | Cache |
+|----------|-------------|-------|
+| `GET /api/funding?venue=&coin=&days=` | Historique funding depuis DB | — |
+| `GET /api/live?venue=&coin=` | Proxy vers l'API live de l'exchange | — |
+| `GET /api/bulk-apr?venue=` | Agrégation SQL avg 3d/7d/30d/90d + lastRate, tous coins | — |
+| `GET /api/coins?venue=` | Liste des coins par venue | — |
+| `GET /api/coin-info?symbol=` | Proxy CoinGecko : infos token, prix, exchanges | 30min |
+| `GET /api/hl-market?coin=` | Données marché HL + analyse orderbook (spread, impact, depth) | 1min (meta) |
+| `GET /api/proxy/:venue/*` | Proxy CORS pour boros, lighter, asterdex | — |
+| `GET /api/status` | Compteur de lignes + dernière date | — |
+
+**Base de données** : stocke uniquement les rates bruts (`funding_rates`). Toutes les moyennes sont calculées à la volée via `AVG()` SQL.
 
 ---
 
