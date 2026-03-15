@@ -29,7 +29,7 @@ function usePersistedState(key, defaultValue) {
 
 // ── Markets (no JP225/KR200 — no data; use EWJ/EWY instead) ─────────────────
 const MARKETS = {
-  "Crypto":      ["HYPE","BTC","ETH","SOL","AVAX","ARB","OP","MATIC","DYDX","BNB","WIF","LINK","SUI","APT","SPX","kPEPE"],
+  "Crypto":      ["BTC","ETH","SOL","HYPE","AVAX","ARB","OP","MATIC","DYDX","BNB","WIF","LINK","SUI","APT","SPX","kPEPE"],
   "Stocks":      ["NVDA","TSLA","AAPL","MSFT","META","AMZN","GOOGL","COIN","AMD","PLTR","NFLX","MSTR","GME","INTC","TSM","HOOD","LLY","ORCL","MU"],
   "Commodities": ["GOLD","SILVER","NATGAS","BRENTOIL","COPPER","PLATINUM","PALLADIUM","URANIUM","ALUMINIUM"],
   "FX / ETF":    ["EUR","JPY","DXY","EWJ","EWY"],
@@ -107,6 +107,8 @@ let ARBI_ASSETS = VENUE_ASSETS.bn;
 
 function apiCoin(c) { return XYZ.has(c) ? `xyz:${c}` : c; }
 function isXyz(c) { return XYZ.has(c); }
+/** Display name: "prefix:COIN" → "COIN-prefix" (e.g. "xyz:NVDA" → "NVDA-xyz", "flx:ETH" → "ETH-flx") */
+function displayCoin(c) { const i = c.indexOf(":"); return i > 0 ? c.slice(i + 1) + "-" + c.slice(0, i) : c; }
 function toAPR(r, freq = 24 * 365) { return parseFloat(r) * 100 * freq; }
 function fmtRate(r) { return (parseFloat(r) * 100).toFixed(4) + "%"; }
 function fmtAPR(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + "%"; }
@@ -118,13 +120,32 @@ function fmtDateTime(ts) {
   return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " " +
     d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
+// Extra known classifications for HIP-3 coins not in MARKETS
+const EXTRA_STOCKS = new Set(["BABA","RIVN","SKHX","SMSN","SNDK","CRWV","HYUNDAI","SOFTBANK","KIOXIA","CRCL","TSM","HOOD","COST","RTX","SEMI","BMNR","SPACEX","OPENAI","ANTHROPIC"]);
+const EXTRA_CMDTY = new Set(["CL","OIL","WTI","BRENTOIL","USOIL","GLDMINE","NUCLEAR"]);
+const EXTRA_INDEX = new Set(["XYZ100","USAR","URNM","USA500","US500","USTECH","SMALL2000","USBOND","USENERGY","MAG7","DEFENSE","ENERGY","BIOTECH","INFOTECH","ROBOT","SEMIS"]);
+const EXTRA_FX = new Set(["USDE"]);
+// Dexes whose coins are primarily non-crypto (stocks/commodities/indices)
+const NON_CRYPTO_DEXES = new Set(["xyz","km","cash","flx","vntl","abcd"]);
+
 function getCat(coin) {
-  for (const [cat, list] of Object.entries(MARKETS)) if (list.includes(coin)) return cat;
-  // Also check Asterdex-specific names
-  if (AD_STOCKS.includes(coin)) return "Stocks";
-  if (AD_COMMODITIES.includes(coin)) return "Commodities";
-  if (AD_FX.includes(coin)) return "FX / ETF";
-  return "Other";
+  // Strip dex prefix for classification
+  const base = coin.includes(":") ? coin.split(":")[1] : coin;
+  const dex = coin.includes(":") ? coin.split(":")[0] : null;
+  // Check known lists first
+  for (const [cat, list] of Object.entries(MARKETS)) if (list.includes(base)) return cat;
+  if (AD_STOCKS.includes(base)) return "Stocks";
+  if (AD_COMMODITIES.includes(base)) return "Commodities";
+  if (AD_FX.includes(base)) return "FX / ETF";
+  // Extra classifications
+  if (EXTRA_STOCKS.has(base)) return "Stocks";
+  if (EXTRA_CMDTY.has(base)) return "Commodities";
+  if (EXTRA_INDEX.has(base)) return "Stocks";
+  if (EXTRA_FX.has(base)) return "FX / ETF";
+  // Fallback by dex: hyna = crypto, others = Stocks
+  if (dex === "hyna") return "Crypto";
+  if (dex && NON_CRYPTO_DEXES.has(dex)) return "Stocks";
+  return "Crypto";
 }
 
 // Symbol overrides / formatters
@@ -720,6 +741,78 @@ async function fetchDynamicAssets() {
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
+// ── Skeleton loaders ──────────────────────────────────────────────────────────
+const Skeleton = ({ w = "100%", h = 12, r = 4, style = {} }) => (
+  <div className="skeleton" style={{ width: w, height: h, borderRadius: r, ...style }} />
+);
+
+const TableSkeleton = ({ rows = 12, cols = 5 }) => (
+  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <thead>
+      <tr style={{ borderBottom: "1px solid var(--border)" }}>
+        {Array.from({ length: cols }, (_, i) => (
+          <th key={i} style={{ padding: "7px 6px" }}>
+            <Skeleton w={i === 0 ? 60 : 36} h={8} />
+          </th>
+        ))}
+      </tr>
+    </thead>
+    <tbody>
+      {Array.from({ length: rows }, (_, i) => (
+        <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+          {Array.from({ length: cols }, (_, j) => (
+            <td key={j} style={{ padding: "6px 6px" }}>
+              <Skeleton w={j === 0 ? 50 + Math.random() * 40 : 42} h={10} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
+const ChartSkeleton = () => (
+  <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 10px 8px", minHeight: 300 }}>
+    <Skeleton w={140} h={11} style={{ marginBottom: 14 }} />
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 240, padding: "0 10px" }}>
+      {Array.from({ length: 60 }, (_, i) => (
+        <div key={i} className="skeleton" style={{ flex: 1, height: 20 + Math.sin(i * 0.3) * 60 + Math.random() * 40, borderRadius: "2px 2px 0 0" }} />
+      ))}
+    </div>
+  </div>
+);
+
+const StatsSkeleton = () => (
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+    {Array.from({ length: 4 }, (_, i) => (
+      <div key={i} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "11px 13px" }}>
+        <Skeleton w={60} h={8} style={{ marginBottom: 8 }} />
+        <Skeleton w={80} h={16} style={{ marginBottom: 6 }} />
+        <Skeleton w={50} h={9} />
+      </div>
+    ))}
+  </div>
+);
+
+const InfoSkeleton = () => (
+  <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+      <Skeleton w={28} h={28} r={14} />
+      <Skeleton w={120} h={14} />
+      <div style={{ marginLeft: "auto" }}><Skeleton w={80} h={16} /></div>
+    </div>
+    <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i}><Skeleton w={60} h={8} style={{ marginBottom: 4 }} /><Skeleton w={70} h={13} /></div>
+      ))}
+    </div>
+    <Skeleton w="100%" h={32} style={{ marginBottom: 8 }} />
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} w={90} h={26} r={6} />)}
+    </div>
+  </div>
+);
+
 const StatCard = ({ label, value, sub, color, live }) => (
   <div style={{ background: "var(--bg-card)", border: `1px solid ${live ? "#4a9eff55" : "var(--border)"}`, borderRadius: 10, padding: "11px 13px" }}>
     <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
@@ -961,7 +1054,7 @@ function TopAssetsBar({ items, activeLabel, onSelect, splitAt, oiCapSet }) {
               }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, fontWeight: 600, color: isActive ? "#4a9eff" : "var(--text)", letterSpacing: "0.02em" }}>
-                {item.label}
+                {displayCoin(item.label)}
                 {oiCapSet?.has(item.label) && <span title="Open Interest cap reached — no new positions can be opened on this asset" style={{ marginLeft: 3, fontSize: 7, opacity: 0.7 }}>🔒</span>}
               </span>
               </div>
@@ -1001,12 +1094,12 @@ function computeStructuralMAs(rates, ppd) {
 }
 
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
-function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
+function ExplorerPage({ venue, category, coin, setCoin }) {
   const isMobile = useIsMobile();
   const { favorites, toggle: toggleFavorite } = useFavorites();
   const [inputCoin, setInputCoin] = useState(coin);
   useEffect(() => { setInputCoin(coin); }, [coin]);
-  const [dexCoins, setDexCoins] = useState([]);   // coins available on current hlDex
+  // (HIP-3 removed — all coins come from bulk-apr)
   const [period, setPeriod] = useState(7);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1061,12 +1154,20 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
     return applyRollingMA(base, windows);
   }, [showMA, data, activeWinList, maMode, ppd]);
 
-  // Structural funding MAs (for basis trade analysis)
-  const structuralMAs = useMemo(() => computeStructuralMAs(data, ppd), [data, ppd]);
+  // Structural funding: fetch 90d of raw data independently of the period selector
+  const [sfData, setSfData] = useState([]);
+  useEffect(() => {
+    const c = coin.replace(/^[^:]+:/, "");
+    if (!c) { setSfData([]); return; }
+    fetch(`/api/funding?venue=${encodeURIComponent(venue)}&coin=${encodeURIComponent(coin)}&days=90`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => setSfData(rows.map(r => ({ time: r.time, rate: r.fundingRate }))))
+      .catch(() => setSfData([]));
+  }, [venue, coin]);
+  const structuralMAs = useMemo(() => computeStructuralMAs(sfData, ppd), [sfData, ppd]);
 
   // Fetch ALL market data from bulk-apr endpoint
   useEffect(() => {
-    if (hlDex) return; // skip bulk fetch for named dexes
     setMarketLoading(true);
     const freq = VENUE_FREQ[venue] ?? 24 * 365;
     fetch(`/api/bulk-apr?venue=${encodeURIComponent(venue)}`)
@@ -1075,20 +1176,19 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
         const parsed = rows.map(r => ({
           coin: r.coin,
           lastRate: r.lastRate,
+          apr1:  r.avg1  != null ? r.avg1  * 100 * freq : null,
           apr3:  r.avg3  != null ? r.avg3  * 100 * freq : null,
           apr7:  r.avg7  != null ? r.avg7  * 100 * freq : null,
-          apr30: r.avg30 != null ? r.avg30 * 100 * freq : null,
-          apr90: r.avg90 != null ? r.avg90 * 100 * freq : null,
         }));
         setMarketData(parsed);
         setMarketLoading(false);
       })
       .catch(() => { setMarketData([]); setMarketLoading(false); });
-  }, [venue, hlDex]);
+  }, [venue]);
 
   // Fetch coin info from CoinGecko (via backend proxy)
   useEffect(() => {
-    const sym = coin.replace(/^xyz:/, "");
+    const sym = coin.replace(/^[^:]+:/, "");
     if (!sym) { setCoinInfo(null); return; }
     setCoinInfoLoading(true);
     fetch(`/api/coin-info?symbol=${encodeURIComponent(sym)}`)
@@ -1100,29 +1200,15 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
   // Fetch Hyperliquid market data (OI, volume, orderbook) when venue is HL
   useEffect(() => {
     if (venue !== "hl") { setHlMarket(null); return; }
-    const c = coin.replace(/^xyz:/, "");
+    const c = coin.replace(/^[^:]+:/, "");
     fetch(`/api/hl-market?coin=${encodeURIComponent(c)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setHlMarket(d?.found ? d : null))
       .catch(() => setHlMarket(null));
   }, [venue, coin]);
 
-  // When hlDex changes, load its coins and auto-select first one
-  useEffect(() => {
-    if (hlDex) {
-      fetchDexCoins(hlDex).then(coins => {
-        setDexCoins(coins);
-        if (coins.length > 0) { setCoin(coins[0]); setInputCoin(coins[0]); }
-      });
-    } else {
-      setDexCoins([]);
-    }
-  }, [hlDex]);
-
-  const loadLive = useCallback(async (c, v, d) => {
+  const loadLive = useCallback(async (c, v) => {
     try {
-      // For HL with named dex, go direct (not stored in backend)
-      if (v === "hl" && d) { setLive(await fetchLiveFunding(c, d)); return; }
       // Try backend /api/live first
       try {
         const res = await fetch(`/api/live?venue=${v}&coin=${encodeURIComponent(c)}`);
@@ -1132,7 +1218,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
         }
       } catch {}
       // Fallback: direct exchange calls
-      if      (v === "hl")  setLive(await fetchLiveFunding(c, d));
+      if      (v === "hl")  setLive(await fetchLiveFunding(c));
       else if (v === "bn")  setLive(await fetchBinanceLiveFunding(c));
       else if (v === "by")  setLive(await fetchBybitLiveFunding(c));
       else if (v === "okx") setLive(await fetchOkxLiveFunding(c));
@@ -1143,9 +1229,9 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
     } catch { setLive(null); }
   }, []);
 
-  const fetchData = useCallback(async (c, days, v, d) => {
+  const fetchData = useCallback(async (c, days, v) => {
     // Only HL supports XYZ (stocks/FX/commodities) assets
-    if (CRYPTO_ONLY_VENUES.has(v) && isXyz(c)) {
+    if (CRYPTO_ONLY_VENUES.has(v) && isXyz(c.replace(/^[^:]+:/, ""))) {
       setData([]); setStats(null); setLive(null);
       setError(`${c} is not available on ${VENUES.find(x => x.id === v)?.label}`);
       return;
@@ -1154,7 +1240,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
     setError(null); setData([]); setStats(null); setLive(null);
     try {
       let raw = [];
-      raw = await apiFetchHistory(v, c, days, v === "hl" ? d : null);
+      raw = await apiFetchHistory(v, c, days);
 
       if (!raw.length) throw new Error(`No data for ${c} on ${VENUES.find(x => x.id === v)?.label}`);
 
@@ -1176,17 +1262,17 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
         min: Math.min(...rates), minApr: Math.min(...rates) * freq,
         positive: ((positive / rates.length) * 100).toFixed(0), count: rates.length,
       });
-      loadLive(c, v, d);
+      loadLive(c, v);
     } catch (e) { setError(e.message); }
     setLoading(false); setLoadingMsg("");
   }, [loadLive]);
 
   useEffect(() => {
-    fetchData(coin, period, venue, hlDex);
+    fetchData(coin, period, venue);
     if (liveRef.current) clearInterval(liveRef.current);
-    liveRef.current = setInterval(() => loadLive(coin, venue, hlDex), 60000);
+    liveRef.current = setInterval(() => loadLive(coin, venue), 60000);
     return () => clearInterval(liveRef.current);
-  }, [coin, period, venue, hlDex, fetchData, loadLive]);
+  }, [coin, period, venue, fetchData, loadLive]);
 
   const handleCoinSelect = (c) => { setCoin(c); setInputCoin(c); };
   const handleSearch = () => { const c = inputCoin.trim().toUpperCase(); if (c) setCoin(c); };
@@ -1196,13 +1282,15 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
   // Market table: filter, sort (favorites first), paginate
   const filteredMarkets = useMemo(() => {
     let rows = marketData;
-    if (searchFilter) rows = rows.filter(r => r.coin.toLowerCase().includes(searchFilter.toLowerCase()));
+    // Filter by category
+    if (category !== "All") rows = rows.filter(r => getCat(r.coin) === category);
+    if (searchFilter) rows = rows.filter(r => displayCoin(r.coin).toLowerCase().includes(searchFilter.toLowerCase()) || r.coin.toLowerCase().includes(searchFilter.toLowerCase()));
     const sorted = [...rows].sort((a, b) => mktSort.dir * ((a[mktSort.col] ?? -9999) - (b[mktSort.col] ?? -9999)));
     // Favorites always on top
     const favs = sorted.filter(r => favorites.has(r.coin));
     const rest = sorted.filter(r => !favorites.has(r.coin));
     return [...favs, ...rest];
-  }, [marketData, searchFilter, mktSort, favorites]);
+  }, [marketData, searchFilter, mktSort, favorites, category]);
   const mktTotalPages = Math.max(1, Math.ceil(filteredMarkets.length / MKT_PAGE_SIZE));
   const mktPageData = filteredMarkets.slice(mktPage * MKT_PAGE_SIZE, (mktPage + 1) * MKT_PAGE_SIZE);
   const handleMktSort = (col) => {
@@ -1218,9 +1306,9 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
           <h2 style={{ fontSize: "clamp(18px,4vw,26px)", fontWeight: 700, color: "var(--text)", margin: 0, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
             Explore Funding Rates
           </h2>
-          {venue === "hl" && (hlDex !== null || isXyz(coin)) && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>HIP-3{hlDex ? ` · ${hlDex}` : ""}</span>}
+          {venue === "hl" && coin.startsWith("xyz:") && <span style={{ fontSize: 9, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "2px 6px", color: "#4a9eff77", letterSpacing: "0.1em" }}>xyz</span>}
         </div>
-        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Historical And Live Funding Rates For {coin}-PERP</div>
+        <div style={{ fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.08em" }}>Historical And Live Funding Rates For {displayCoin(coin)}-PERP</div>
       </div>
 
       {/* Top assets: 3 highest + 3 lowest */}
@@ -1258,16 +1346,14 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
         {/* Left: Market table (narrower) */}
         <div style={{ width: isMobile ? "100%" : "32%", minWidth: isMobile ? 0 : 260, flexShrink: 0 }}>
           <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-            {marketLoading && (
-              <div style={{ padding: 20, textAlign: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>Loading markets…</div>
-            )}
+            {marketLoading && <TableSkeleton rows={12} cols={5} />}
             {!marketLoading && (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
                   <thead>
                     <tr style={{ background: "var(--bg)", borderBottom: "1px solid var(--border)" }}>
                       <th style={{ padding: "7px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 8, letterSpacing: "0.1em", fontWeight: 600 }}>ASSET</th>
-                      {[{k:"lastRate",l:"RATE"},{k:"apr3",l:"3D"},{k:"apr7",l:"7D"},{k:"apr30",l:"30D"},{k:"apr90",l:"90D"}].map(c => (
+                      {[{k:"lastRate",l:"LIVE"},{k:"apr1",l:"1D"},{k:"apr3",l:"3D"},{k:"apr7",l:"7D"}].map(c => (
                         <th key={c.k} onClick={() => handleMktSort(c.k)} style={{ padding: "7px 4px", textAlign: "right", color: mktSort.col === c.k ? "#4a9eff" : "var(--text-label)", fontSize: 8, letterSpacing: "0.05em", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}>
                           {c.l} {mktSort.col === c.k ? (mktSort.dir > 0 ? "▲" : "▼") : ""}
                         </th>
@@ -1284,7 +1370,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
                       const showSep = prevRow && favorites.has(prevRow.coin) && !isFav;
                       return (
                         <Fragment key={row.coin}>
-                          {showSep && <tr><td colSpan={6} style={{ padding: 0, height: 2, background: "#4a9eff33" }} /></tr>}
+                          {showSep && <tr><td colSpan={5} style={{ padding: 0, height: 2, background: "#4a9eff33" }} /></tr>}
                           <tr
                             onClick={() => handleCoinSelect(row.coin)}
                             style={{ borderBottom: "1px solid var(--border)", background: isSelected ? "#4a9eff11" : "var(--bg-card)", cursor: "pointer" }}
@@ -1297,11 +1383,14 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
                                 title={isFav ? "Remove from favorites" : "Add to favorites"}
                               >{isFav ? "★" : "☆"}</span>
                               {isSelected && <span style={{ color: "#4a9eff", marginRight: 3 }}>›</span>}
-                              {row.coin}
+                              {displayCoin(row.coin)}
                               {oiCapSet.has(row.coin) && <span title="Open Interest cap reached — no new positions can be opened on this asset" style={{ marginLeft: 4, fontSize: 8, opacity: 0.7 }}>🔒</span>}
                             </td>
                           <td style={{ padding: "6px 4px", textAlign: "right", color: (rateAPR ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
                             {rateAPR != null ? fmtAPR(rateAPR) : "—"}
+                          </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr1 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
+                            {row.apr1 != null ? fmtAPR(row.apr1) : "—"}
                           </td>
                           <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr3 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
                             {row.apr3 != null ? fmtAPR(row.apr3) : "—"}
@@ -1309,18 +1398,12 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
                           <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr7 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
                             {row.apr7 != null ? fmtAPR(row.apr7) : "—"}
                           </td>
-                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr30 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
-                            {row.apr30 != null ? fmtAPR(row.apr30) : "—"}
-                          </td>
-                          <td style={{ padding: "6px 4px", textAlign: "right", color: (row.apr90 ?? 0) >= 0 ? "#16c784" : "#ea3943", fontWeight: 500, fontSize: 9 }}>
-                            {row.apr90 != null ? fmtAPR(row.apr90) : "—"}
-                          </td>
                           </tr>
                         </Fragment>
                       );
                     })}
                     {mktPageData.length === 0 && (
-                      <tr><td colSpan={6} style={{ padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>No markets found</td></tr>
+                      <tr><td colSpan={5} style={{ padding: 16, textAlign: "center", color: "var(--text-dim)", fontSize: 10 }}>No markets found</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1338,8 +1421,38 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
           </div>
         </div>
 
-        {/* Right: Controls + Stats + Chart (wider) */}
+        {/* Right: CoinGecko header + Controls + Stats + Chart (wider) */}
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* CoinGecko condensed header */}
+          {coinInfo && coinInfo.found && (
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {coinInfo.image && <img src={coinInfo.image} alt="" style={{ width: 18, height: 18, borderRadius: 4 }} />}
+              <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>{coinInfo.name}</span>
+              <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{coinInfo.symbol}</span>
+              {coinInfo.marketCapRank && <span style={{ fontSize: 7, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "1px 4px", color: "#4a9eff77" }}>#{coinInfo.marketCapRank}</span>}
+              <div style={{ flex: 1 }} />
+              {coinInfo.currentPrice != null && (
+                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text)" }}>${coinInfo.currentPrice.toLocaleString("en", { maximumFractionDigits: coinInfo.currentPrice < 1 ? 6 : 2 })}</span>
+              )}
+              {coinInfo.priceChange24h != null && (
+                <span style={{ fontSize: 9, color: coinInfo.priceChange24h >= 0 ? "#16c784" : "#ea3943", fontWeight: 500 }}>
+                  {coinInfo.priceChange24h >= 0 ? "+" : ""}{coinInfo.priceChange24h.toFixed(2)}%
+                </span>
+              )}
+              {coinInfo.marketCap != null && (
+                <span style={{ fontSize: 8, color: "var(--text-muted)" }}>MCap ${coinInfo.marketCap >= 1e9 ? (coinInfo.marketCap / 1e9).toFixed(1) + "B" : coinInfo.marketCap >= 1e6 ? (coinInfo.marketCap / 1e6).toFixed(0) + "M" : coinInfo.marketCap.toLocaleString()}</span>
+              )}
+            </div>
+          )}
+          {coinInfoLoading && (
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+              <Skeleton w={18} h={18} r={4} />
+              <Skeleton w={80} h={11} />
+              <div style={{ flex: 1 }} />
+              <Skeleton w={60} h={11} />
+            </div>
+          )}
+
           {/* Controls: MA */}
           <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
@@ -1383,6 +1496,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
           </div>
 
           {/* Stats */}
+          {loading && !stats && <StatsSkeleton />}
           {stats && (
             <div style={{ marginBottom: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
@@ -1421,8 +1535,16 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
               : data;
             return (
               <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "14px 4px 8px", minHeight: 300, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                <div style={{ fontSize: 10, color: "var(--text)", fontWeight: 600, padding: "0 10px 8px", letterSpacing: "0.02em" }}>{coin}-PERP · {venueInfo?.label}</div>
-                {loading && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#4a9eff", fontSize: 11, letterSpacing: "0.1em" }}>⟳ {loadingMsg}</div>}
+                <div style={{ fontSize: 10, color: "var(--text)", fontWeight: 600, padding: "0 10px 8px", letterSpacing: "0.02em" }}>{displayCoin(coin)}-PERP · {venueInfo?.label}</div>
+                {loading && (
+                  <div style={{ padding: "10px 10px 0" }}>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 240 }}>
+                      {Array.from({ length: 60 }, (_, i) => (
+                        <div key={i} className="skeleton" style={{ flex: 1, height: 20 + Math.sin(i * 0.3) * 60 + Math.random() * 40, borderRadius: "2px 2px 0 0" }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {error && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#ff4d6d", fontSize: 11, padding: "0 20px", textAlign: "center" }}>⚠ {error}</div>}
                 {!loading && !error && chartData.length > 0 && (
                   <ResponsiveContainer width="100%" height={280}>
@@ -1468,200 +1590,168 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
         </div>
       </div>
 
-      {/* ── Hyperliquid Market Data ── */}
-      {hlMarket && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#4a9eff" }}>Hyperliquid</span>
-            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{hlMarket.coin}-PERP</span>
-            <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 8, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "1px 5px", color: "#4a9eff77" }}>max {hlMarket.maxLeverage}x</span>
-          </div>
-
-          {/* Key metrics */}
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
-            {[
-              { label: "Open Interest", value: hlMarket.openInterestUsd, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K") },
-              { label: "Volume 24h", value: hlMarket.dayNtlVlm, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K") },
-              { label: "Mark Price", value: hlMarket.markPx, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
-              { label: "Oracle Price", value: hlMarket.oraclePx, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
-              { label: "Funding (1h)", value: hlMarket.funding, fmt: v => (v >= 0 ? "+" : "") + (v * 100).toFixed(4) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
-              { label: "Premium", value: hlMarket.premium, fmt: v => (v >= 0 ? "+" : "") + (v * 100).toFixed(3) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
-            ].filter(m => m.value != null).map(m => (
-              <div key={m.label} style={{ minWidth: 80 }}>
-                <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 }}>{m.label}</div>
-                <div style={{ fontSize: 10, fontWeight: 500, color: m.color ? m.color(m.value) : "var(--text)" }}>{m.fmt(m.value)}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Orderbook liquidity analysis */}
-          {hlMarket.orderbook && (
-            <>
-              <div style={{ fontSize: 8, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>
-                Liquidity Analysis — Spread: {(hlMarket.orderbook.spreadBps / 100).toFixed(3)}%
-              </div>
-
-              {/* Price impact table */}
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Price Impact (slippage)</div>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
-                    <thead>
-                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                        <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>SIZE</th>
-                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>BUY</th>
-                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>SELL</th>
-                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>AVG</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hlMarket.orderbook.impacts.map(imp => {
-                        const slipColor = (pct) => pct < 0.05 ? "#16c784" : pct < 0.2 ? "#f0b90b" : pct < 0.5 ? "#ff8fa0" : "#ea3943";
-                        return (
-                          <tr key={imp.sizeUsd} style={{ borderBottom: "1px solid var(--border-dim)" }}>
-                            <td style={{ padding: "3px 6px", color: "var(--text)" }}>${(imp.sizeUsd / 1000).toFixed(0)}K</td>
-                            <td style={{ padding: "3px 6px", textAlign: "right", color: slipColor(imp.buySlippageBps / 100) }}>{(imp.buySlippageBps / 100).toFixed(3)}%</td>
-                            <td style={{ padding: "3px 6px", textAlign: "right", color: slipColor(imp.sellSlippageBps / 100) }}>{(imp.sellSlippageBps / 100).toFixed(3)}%</td>
-                            <td style={{ padding: "3px 6px", textAlign: "right", fontWeight: 600, color: slipColor(imp.avgSlippageBps / 100) }}>{(imp.avgSlippageBps / 100).toFixed(3)}%</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+      {/* ── LIQUIDITY ── */}
+      {(hlMarket || (coinInfo && coinInfo.found)) && (
+        <>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text)", letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 18, marginBottom: 8 }}>Liquidity</div>
+          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14 }}>
+            {/* Perp liquidity (HL orderbook) */}
+            {hlMarket && (
+              <div style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#4a9eff" }}>Perp</span>
+                  <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{hlMarket.coin}-PERP · Hyperliquid</span>
+                  <div style={{ flex: 1 }} />
+                  <span style={{ fontSize: 7, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "1px 5px", color: "#4a9eff77" }}>max {hlMarket.maxLeverage}x</span>
                 </div>
 
-                {/* Depth */}
-                <div style={{ minWidth: 160 }}>
-                  <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Order Book Depth</div>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
-                    <thead>
-                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                        <th style={{ padding: "4px 6px", textAlign: "left", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>RANGE</th>
-                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>BIDS</th>
-                        <th style={{ padding: "4px 6px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>ASKS</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hlMarket.orderbook.depth.map(d => {
-                        const fmtUsd = v => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K";
-                        return (
-                          <tr key={d.bps} style={{ borderBottom: "1px solid var(--border-dim)" }}>
-                            <td style={{ padding: "3px 6px", color: "var(--text-muted)" }}>+/-{(d.bps / 100).toFixed(1)}%</td>
-                            <td style={{ padding: "3px 6px", textAlign: "right", color: "#16c784" }}>${fmtUsd(d.bidUsd)}</td>
-                            <td style={{ padding: "3px 6px", textAlign: "right", color: "#ea3943" }}>${fmtUsd(d.askUsd)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                {/* Key metrics */}
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
+                  {[
+                    { label: "OI", value: hlMarket.openInterestUsd, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K") },
+                    { label: "Vol 24h", value: hlMarket.dayNtlVlm, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(2) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K") },
+                    { label: "Funding", value: hlMarket.funding, fmt: v => (v >= 0 ? "+" : "") + (v * 100).toFixed(4) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+                    { label: "Spread", value: hlMarket.orderbook?.spreadBps, fmt: v => (v / 100).toFixed(3) + "%" },
+                  ].filter(m => m.value != null).map(m => (
+                    <div key={m.label}>
+                      <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 }}>{m.label}</div>
+                      <div style={{ fontSize: 10, fontWeight: 500, color: m.color ? m.color(m.value) : "var(--text)" }}>{m.fmt(m.value)}</div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
 
-      {/* ── Market Info (CoinGecko) ── */}
-      {coinInfo && coinInfo.found && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            {coinInfo.image && <img src={coinInfo.image} alt="" style={{ width: 20, height: 20, borderRadius: 4 }} />}
-            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{coinInfo.name}</span>
-            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{coinInfo.symbol}</span>
-            {coinInfo.marketCapRank && <span style={{ fontSize: 8, background: "#4a9eff18", border: "1px solid #4a9eff33", borderRadius: 3, padding: "1px 5px", color: "#4a9eff77" }}>#{coinInfo.marketCapRank}</span>}
-            <div style={{ flex: 1 }} />
-            {coinInfo.currentPrice != null && (
-              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>${coinInfo.currentPrice.toLocaleString("en", { maximumFractionDigits: coinInfo.currentPrice < 1 ? 6 : 2 })}</span>
+                {/* Price impact + Depth */}
+                {hlMarket.orderbook && (
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Price Impact</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+                        <thead>
+                          <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                            <th style={{ padding: "3px 4px", textAlign: "left", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>SIZE</th>
+                            <th style={{ padding: "3px 4px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>BUY</th>
+                            <th style={{ padding: "3px 4px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>SELL</th>
+                            <th style={{ padding: "3px 4px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>AVG</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {hlMarket.orderbook.impacts.map(imp => {
+                            const slipColor = (pct) => pct < 0.05 ? "#16c784" : pct < 0.2 ? "#f0b90b" : pct < 0.5 ? "#ff8fa0" : "#ea3943";
+                            return (
+                              <tr key={imp.sizeUsd} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                                <td style={{ padding: "2px 4px", color: "var(--text)" }}>${(imp.sizeUsd / 1000).toFixed(0)}K</td>
+                                <td style={{ padding: "2px 4px", textAlign: "right", color: slipColor(imp.buySlippageBps / 100) }}>{(imp.buySlippageBps / 100).toFixed(3)}%</td>
+                                <td style={{ padding: "2px 4px", textAlign: "right", color: slipColor(imp.sellSlippageBps / 100) }}>{(imp.sellSlippageBps / 100).toFixed(3)}%</td>
+                                <td style={{ padding: "2px 4px", textAlign: "right", fontWeight: 600, color: slipColor(imp.avgSlippageBps / 100) }}>{(imp.avgSlippageBps / 100).toFixed(3)}%</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div style={{ minWidth: 140 }}>
+                      <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Depth</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace" }}>
+                        <thead>
+                          <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                            <th style={{ padding: "3px 4px", textAlign: "left", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>RANGE</th>
+                            <th style={{ padding: "3px 4px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>BIDS</th>
+                            <th style={{ padding: "3px 4px", textAlign: "right", color: "var(--text-label)", fontSize: 7, fontWeight: 600 }}>ASKS</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {hlMarket.orderbook.depth.map(d => {
+                            const fmtUsd = v => v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (v / 1e3).toFixed(0) + "K";
+                            return (
+                              <tr key={d.bps} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                                <td style={{ padding: "2px 4px", color: "var(--text-muted)" }}>+/-{(d.bps / 100).toFixed(1)}%</td>
+                                <td style={{ padding: "2px 4px", textAlign: "right", color: "#16c784" }}>${fmtUsd(d.bidUsd)}</td>
+                                <td style={{ padding: "2px 4px", textAlign: "right", color: "#ea3943" }}>${fmtUsd(d.askUsd)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
-            {coinInfo.priceChange24h != null && (
-              <span style={{ fontSize: 10, color: coinInfo.priceChange24h >= 0 ? "#16c784" : "#ea3943", fontWeight: 500 }}>
-                {coinInfo.priceChange24h >= 0 ? "+" : ""}{coinInfo.priceChange24h.toFixed(2)}%
-              </span>
+
+            {/* Spot liquidity (CoinGecko exchanges) */}
+            {coinInfo && coinInfo.found && (
+              <div style={{ flex: 1, minWidth: 0, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#00d4aa" }}>Spot</span>
+                  <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{coinInfo.symbol} · CoinGecko</span>
+                </div>
+
+                {/* Token metrics */}
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 10 }}>
+                  {[
+                    { label: "Vol 24h", value: coinInfo.totalVolume24h, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(0) + "M" : v.toLocaleString()) },
+                    { label: "7d", value: coinInfo.priceChange7d, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+                    { label: "30d", value: coinInfo.priceChange30d, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
+                    { label: "ATH", value: coinInfo.ath, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
+                    { label: "Supply", value: coinInfo.circulatingSupply, fmt: v => (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v.toLocaleString()) },
+                  ].filter(m => m.value != null).map(m => (
+                    <div key={m.label}>
+                      <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 }}>{m.label}</div>
+                      <div style={{ fontSize: 10, fontWeight: 500, color: m.color ? m.color(m.value) : "var(--text)" }}>{m.fmt(m.value)}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Spot exchanges */}
+                {coinInfo.spotExchanges?.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Buy Spot</div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {coinInfo.spotExchanges.map(ex => (
+                        <a key={ex.name} href={ex.tradeUrl || "#"} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 8, padding: "2px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", textDecoration: "none", cursor: "pointer" }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = "#4a9eff"; e.currentTarget.style.color = "#4a9eff"; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
+                        >
+                          {ex.name}
+                          {ex.volume24h != null && <span style={{ color: "var(--text-muted)", marginLeft: 3, fontSize: 7 }}>${ex.volume24h >= 1e6 ? (ex.volume24h / 1e6).toFixed(0) + "M" : (ex.volume24h / 1e3).toFixed(0) + "K"}</span>}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Derivatives exchanges */}
+                {coinInfo.derivExchanges?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Derivatives</div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {coinInfo.derivExchanges.map(ex => (
+                        <a key={ex.name} href={ex.tradeUrl || "#"} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 8, padding: "2px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", textDecoration: "none" }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = "#a78bfa"; e.currentTarget.style.color = "#a78bfa"; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
+                        >{ex.name}</a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-
-          {/* Key metrics row */}
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
-            {[
-              { label: "Market Cap", value: coinInfo.marketCap, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(0) + "M" : v.toLocaleString()) },
-              { label: "Volume 24h", value: coinInfo.totalVolume24h, fmt: v => "$" + (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(0) + "M" : v.toLocaleString()) },
-              { label: "7d", value: coinInfo.priceChange7d, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
-              { label: "30d", value: coinInfo.priceChange30d, fmt: v => (v >= 0 ? "+" : "") + v.toFixed(2) + "%", color: v => v >= 0 ? "#16c784" : "#ea3943" },
-              { label: "ATH", value: coinInfo.ath, fmt: v => "$" + v.toLocaleString("en", { maximumFractionDigits: v < 1 ? 6 : 2 }) },
-              { label: "Circ. Supply", value: coinInfo.circulatingSupply, fmt: v => (v >= 1e9 ? (v / 1e9).toFixed(1) + "B" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v.toLocaleString()) },
-            ].filter(m => m.value != null).map(m => (
-              <div key={m.label} style={{ minWidth: 70 }}>
-                <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 2 }}>{m.label}</div>
-                <div style={{ fontSize: 10, fontWeight: 500, color: m.color ? m.color(m.value) : "var(--text)" }}>{m.fmt(m.value)}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Description */}
-          {coinInfo.description && (
-            <div style={{ fontSize: 9, color: "var(--text-dim)", lineHeight: 1.5, marginBottom: 12, maxHeight: 40, overflow: "hidden" }}>
-              {coinInfo.description.replace(/<[^>]*>/g, "")}
-            </div>
-          )}
-
-          {/* Spot exchanges */}
-          {coinInfo.spotExchanges?.length > 0 && (
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 8, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Buy Spot</div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {coinInfo.spotExchanges.map(ex => (
-                  <a key={ex.name} href={ex.tradeUrl || "#"} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 9, padding: "3px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", textDecoration: "none", cursor: "pointer" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#4a9eff"; e.currentTarget.style.color = "#4a9eff"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
-                  >
-                    {ex.name}
-                    {ex.volume24h != null && <span style={{ color: "var(--text-muted)", marginLeft: 4, fontSize: 8 }}>${ex.volume24h >= 1e6 ? (ex.volume24h / 1e6).toFixed(0) + "M" : (ex.volume24h / 1e3).toFixed(0) + "K"}</span>}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Derivatives exchanges */}
-          {coinInfo.derivExchanges?.length > 0 && (
-            <div>
-              <div style={{ fontSize: 8, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Derivatives (Perps)</div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {coinInfo.derivExchanges.map(ex => (
-                  <a key={ex.name} href={ex.tradeUrl || "#"} target="_blank" rel="noopener noreferrer"
-                    style={{ fontSize: 9, padding: "3px 8px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", textDecoration: "none" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#a78bfa"; e.currentTarget.style.color = "#a78bfa"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text)"; }}
-                  >{ex.name}</a>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      {coinInfoLoading && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: 16, marginTop: 14, textAlign: "center", color: "#4a9eff", fontSize: 10 }}>
-          Loading market info...
-        </div>
-      )}
-      {coinInfo && !coinInfo.found && !coinInfoLoading && (
-        <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 16px", marginTop: 14, fontSize: 9, color: "var(--text-muted)" }}>
-          No market info found for {coin} on CoinGecko
-        </div>
+        </>
       )}
 
       {/* ── Structural Funding Analysis ── */}
       {/* ── Structural Funding ── */}
       {structuralMAs.length > 0 && (() => {
-        const meanAPR = structuralMAs.reduce((s, m) => s + m.ma, 0) / structuralMAs.length * freq;
+        const meanAPR = structuralMAs.reduce((s, m) => s + m.ma, 0) / structuralMAs.length * freq * 100;
         const thStyle = { textAlign: "center", padding: "4px 4px", color: "var(--text-label)", fontWeight: 500, fontSize: 7, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" };
         const tdStyle = { textAlign: "center", padding: "3px 4px", fontSize: 9, whiteSpace: "nowrap" };
         return (
           <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", marginTop: 14 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
-              Structural Funding — {coin}
+              Structural Funding — {displayCoin(coin)}
             </div>
 
             {/* Horizontal MA table: 19 period columns + Mean */}
@@ -1678,7 +1768,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
                 <tbody>
                   <tr>
                     {structuralMAs.map(m => {
-                      const apr = m.ma * freq;
+                      const apr = m.ma * freq * 100;
                       return (
                         <td key={m.days} style={{ ...tdStyle, color: apr >= 0 ? "#16c784" : "#ea3943", fontWeight: 600 }}>
                           {apr >= 0 ? "+" : ""}{apr.toFixed(1)}%
@@ -1696,7 +1786,7 @@ function ExplorerPage({ venue, category, coin, setCoin, hlDex, setHlDex }) {
             {/* MA Curve Chart */}
             <div style={{ fontSize: 7, color: "var(--text-label)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>MA Curve (1d → {structuralMAs[structuralMAs.length - 1].days}d)</div>
             <ResponsiveContainer width="100%" height={200}>
-              <ComposedChart data={structuralMAs.map(m => ({ days: m.days + "d", apr: m.ma * freq }))} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
+              <ComposedChart data={structuralMAs.map(m => ({ days: m.days + "d", apr: m.ma * freq * 100 }))} margin={{ top: 4, right: 8, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} strokeWidth={0.5} />
                 <XAxis dataKey="days" tick={{ fontSize: 8, fill: "var(--text-muted)" }} />
                 <YAxis tickFormatter={v => v.toFixed(1) + "%"} tick={{ fontSize: 8, fill: "var(--text-muted)" }} />
@@ -2914,9 +3004,7 @@ export default function App() {
   const [category, setCategory] = usePersistedState("globalCategory", "Crypto");
   const [coin, setCoin] = usePersistedState("globalCoin", "BTC");
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [hlDex, setHlDex] = useState(null);
-  const [perpDexs, setPerpDexs] = useState([]);
-  useEffect(() => { fetchPerpDexs().then(setPerpDexs); }, []);
+  // (HIP-3 selector removed — xyz assets shown inline with -xyz suffix)
 
   const selectedVenuesSet = useMemo(() => new Set(selectedVenues), [selectedVenues]);
   const primaryVenue = selectedVenues[0] || "hl";
@@ -2960,13 +3048,14 @@ export default function App() {
     }
   }, [primaryVenue, category, setCategory]);
 
-  // Auto-correct coin when venue or category changes
+  // Auto-correct coin when venue or category changes (NOT when coin changes)
   useEffect(() => {
     const coins = getVenueCoins(primaryVenue, category);
     if (coins.length && !coins.includes(coin)) {
       setCoin(coins[0]);
     }
-  }, [primaryVenue, category, coin, setCoin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryVenue, category]);
 
   const navigateToExplorer = useCallback((c) => { setCoin(c); setPage("explorer"); }, [setCoin, setPage]);
 
@@ -3143,36 +3232,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* HIP-3 — only for Explorer on HL */}
-              {page === "explorer" && primaryVenue === "hl" && perpDexs.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>HIP-3</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                    <button onClick={() => setHlDex(null)} style={{
-                      padding: "4px 8px", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
-                      background: hlDex === null ? "#4a9eff22" : "transparent",
-                      border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
-                      borderRadius: 4, color: hlDex === null ? "#4a9eff" : "var(--text-muted)",
-                      cursor: "pointer", fontWeight: hlDex === null ? 600 : 400,
-                    }}>USDC</button>
-                    {perpDexs.map(dx => {
-                      const name = typeof dx === "string" ? dx : dx?.name;
-                      if (!name) return null;
-                      const label = dx?.fullName && dx.fullName.length <= 14 ? dx.fullName : name.toUpperCase();
-                      return (
-                        <button key={name} onClick={() => setHlDex(name)} style={{
-                          padding: "4px 8px", fontSize: 9, fontFamily: "'IBM Plex Mono', monospace",
-                          background: hlDex === name ? "#4a9eff22" : "transparent",
-                          border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
-                          borderRadius: 4, color: hlDex === name ? "#4a9eff" : "var(--text-muted)",
-                          cursor: "pointer", fontWeight: hlDex === name ? 600 : 400,
-                          letterSpacing: "0.04em", textTransform: "uppercase",
-                        }}>{label}</button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -3256,36 +3315,6 @@ export default function App() {
                 <CoinSelector coins={sidebarCoins} selected={coin} onSelect={(c) => { setCoin(c); setShowMobileFilters(false); }} />
               </div>
             )}
-            {/* HIP-3 */}
-            {page === "explorer" && primaryVenue === "hl" && perpDexs.length > 0 && (
-              <div>
-                <div style={{ fontSize: 9, color: "var(--text-label)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6, fontWeight: 600 }}>HIP-3</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                  <button onClick={() => { setHlDex(null); setShowMobileFilters(false); }} style={{
-                    padding: "6px 10px", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace",
-                    background: hlDex === null ? "#4a9eff22" : "transparent",
-                    border: `1px solid ${hlDex === null ? "#4a9eff" : "var(--border)"}`,
-                    borderRadius: 4, color: hlDex === null ? "#4a9eff" : "var(--text-muted)",
-                    cursor: "pointer", fontWeight: hlDex === null ? 600 : 400,
-                  }}>USDC</button>
-                  {perpDexs.map(dx => {
-                    const name = typeof dx === "string" ? dx : dx?.name;
-                    if (!name) return null;
-                    const label = dx?.fullName && dx.fullName.length <= 14 ? dx.fullName : name.toUpperCase();
-                    return (
-                      <button key={name} onClick={() => { setHlDex(name); setShowMobileFilters(false); }} style={{
-                        padding: "6px 10px", fontSize: 10, fontFamily: "'IBM Plex Mono', monospace",
-                        background: hlDex === name ? "#4a9eff22" : "transparent",
-                        border: `1px solid ${hlDex === name ? "#4a9eff" : "var(--border)"}`,
-                        borderRadius: 4, color: hlDex === name ? "#4a9eff" : "var(--text-muted)",
-                        cursor: "pointer", fontWeight: hlDex === name ? 600 : 400,
-                        textTransform: "uppercase",
-                      }}>{label}</button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         </>
       )}
@@ -3326,7 +3355,7 @@ export default function App() {
       <div style={{ flex: 1, overflow: "auto", padding: isMobile ? "12px 14px" : "clamp(14px,3vw,28px) clamp(16px,4vw,32px)", paddingBottom: isMobile ? 68 : undefined }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
           {page === "explorer"
-            ? <ExplorerPage key={coin} venue={primaryVenue} category={category === "All" ? "Crypto" : category} coin={coin} setCoin={setCoin} hlDex={hlDex} setHlDex={setHlDex} />
+            ? <ExplorerPage key={coin} venue={primaryVenue} category={category} coin={coin} setCoin={setCoin} />
             : page === "compare"
             ? <ComparePage selectedVenues={selectedVenuesSet} category={category} onNavigate={navigateToExplorer} />
             : page === "arbi"
